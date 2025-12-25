@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "fpdf>=1.7.2",           # <--- Added this line
     "ipykernel>=7.1.0",
     "jupyter>=1.1.1",
     "openai>=2.14.0",
