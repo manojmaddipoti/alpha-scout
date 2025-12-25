@@ -57,8 +57,7 @@ with st.sidebar:
     """)
 
 # --- 4. System Prompt (The Strict Judge) ---
-SYSTEM_PROMPT = """
-YYou are a Senior Investment Analyst.
+SYSTEM_PROMPT = """You are a Senior Investment Analyst.
 When asked about a stock, you MUST follow this structure:
 
 1. **Company Mission:** Summarize the 'mission' from the tool output in 2 sentences.
@@ -76,12 +75,20 @@ When asked about a stock, you MUST follow this structure:
 6. **Verdict:** Buy, Hold, or Sell (based on the data).
 """
 
-# --- 5. Load History ---
+# --- 5. Load & Sync History ---
 stored_messages = db.load_messages()
+
 if not stored_messages:
+    # Scenario A: Brand new database
     db.save_message("system", SYSTEM_PROMPT)
     st.session_state.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 else:
+    # Scenario B: History exists, but we want to check if the Prompt changed!
+    if stored_messages[0]["role"] == "system" and stored_messages[0]["content"] != SYSTEM_PROMPT:
+        # Detected a code update! Overwrite the old system prompt in memory
+        stored_messages[0]["content"] = SYSTEM_PROMPT
+        # (Optional: You could strictly update the DB here too, but updating session_state is usually enough for the current run)
+    
     st.session_state.messages = stored_messages
 
 # --- 6. Helper: Chart ---
