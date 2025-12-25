@@ -67,10 +67,17 @@ if "current_session_id" not in st.session_state:
 with st.sidebar:
     st.title("✨ Market Agent")
     
+    # --- MODEL SELECTOR ---
+    model_choice = st.selectbox(
+        "🧠 AI Model",
+        ["gpt-4o", "gemini-1.5-flash", "gemini-1.5-pro"],
+        index=0
+    )
+    
     # NEW CHAT BUTTON
     if st.button("➕ New Chat", use_container_width=True, type="primary"):
         st.session_state.current_session_id = None
-        st.session_state.messages = [] # Clear local view
+        st.session_state.messages = [] 
         st.rerun()
 
     st.subheader("Recent Chats")
@@ -177,7 +184,7 @@ if prompt := st.chat_input("Ask about a stock (e.g., 'Analyze Nvidia')"):
         with st.spinner("Analyzing market data..."):
             
             # Run Agent
-            response_text, found_tickers = run_smart_agent(st.session_state.messages)
+            response_text, found_tickers = run_smart_agent(st.session_state.messages, model_choice)
             
             # Charts
             if found_tickers:
