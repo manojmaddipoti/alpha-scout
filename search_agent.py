@@ -13,24 +13,31 @@ load_dotenv()
 openai_client = OpenAI()
 tavily = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
 
-# Configure Gemini with a check
+# Configure Gemini
 if os.getenv("GOOGLE_API_KEY"):
     genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 
-# --- HELPER: List Available Models (Debug) ---
+# --- HELPER: List Available Models ---
 def get_valid_gemini_models():
     """Returns a list of models available to this API Key."""
     try:
         models = []
+        # List all models and filter for 'generateContent' capability
         for m in genai.list_models():
             if 'generateContent' in m.supported_generation_methods:
-                # Strip 'models/' prefix for cleaner UI
+                # Clean up the name (remove 'models/' prefix)
                 name = m.name.replace("models/", "")
                 models.append(name)
+        
+        # If the list is empty (rare), return defaults
+        if not models:
+            return ["gemini-1.5-flash", "gemini-2.0-flash-exp", "gemini-1.5-pro"]
+            
         return models
     except Exception as e:
         print(f"Error listing Gemini models: {e}")
-        return ["gemini-1.5-flash", "gemini-pro"] # Fallback defaults
+        # Fallback list if the API fails to list them
+        return ["gemini-1.5-flash", "gemini-2.0-flash-exp", "gemini-1.5-pro"]
 
 # --- 2. TOOL FUNCTIONS ---
 def web_search(query: str):
@@ -142,11 +149,12 @@ def run_openai_logic(messages):
         
     return assistant_msg.content, found_tickers
 
-# --- 4. GEMINI LOGIC (Updated) ---
+# --- 4. GEMINI LOGIC (FIXED) ---
 def run_gemini_logic(messages, model_name="gemini-1.5-flash"):
     chat_history = []
     system_instruction = "You are a helpful financial analyst."
     
+    # 1. Parse History
     for msg in messages:
         role = msg["role"]
         content = msg["content"]
@@ -158,22 +166,32 @@ def run_gemini_logic(messages, model_name="gemini-1.5-flash"):
             chat_history.append({"role": "model", "parts": [content]})
     
     try:
+        # 2. Init Model
         model = genai.GenerativeModel(
             model_name=model_name,
             tools=[web_search, get_financial_metrics],
             system_instruction=system_instruction
         )
         
+        # 3. Extract last user message (Trigger)
         last_user_msg = "Proceed."
         if chat_history and chat_history[-1]["role"] == "user":
             last_user_msg = chat_history.pop()["parts"][0]
             
-        chat = model.start_chat(history=chat_history)
+        # 4. Start Chat with AUTOMATIC FUNCTION CALLING ENABLED
+        chat = model.start_chat(
+            history=chat_history,
+            enable_automatic_function_calling=True 
+        )
+        
+        # 5. Send Message (Gemini will run tools internally now)
         response = chat.send_message(last_user_msg)
+        
+        # 6. Return Text
         return response.text, []
         
     except NotFound:
-        return f"❌ Error: Model '{model_name}' not found. Try 'gemini-1.5-flash-001' or check your API key permissions.", []
+        return f"❌ Error: Model '{model_name}' not found. Please pick a different model from the sidebar.", []
     except InvalidArgument as e:
          return f"❌ Error: Invalid Argument. {str(e)}", []
     except Exception as e:
