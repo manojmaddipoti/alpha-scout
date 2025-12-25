@@ -430,3 +430,11 @@ widgetsnbextension==4.0.15
     # via ipywidgets
 yfinance==1.0
     # via my-ai-agent (pyproject.toml)
+streamlit
+openai
+tavily-python
+python-dotenv
+yfinance
+pandas
+watchdog
+fpdf
