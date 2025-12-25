@@ -4,8 +4,9 @@ import yfinance as yf
 from openai import OpenAI
 from tavily import TavilyClient
 import google.generativeai as genai
-from google.api_core.exceptions import NotFound, PermissionDenied, InvalidArgument
+from google.api_core.exceptions import NotFound, InvalidArgument
 from dotenv import load_dotenv
+from edgar import Company, set_identity
 
 load_dotenv()
 
@@ -13,35 +14,66 @@ load_dotenv()
 openai_client = OpenAI()
 tavily = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
 
-# Configure Gemini
 if os.getenv("GOOGLE_API_KEY"):
     genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 
+# SEC Identity (Required)
+if os.getenv("SEC_IDENTITY"):
+    set_identity(os.getenv("SEC_IDENTITY"))
+
 # --- HELPER: List Available Models ---
 def get_valid_gemini_models():
-    """Returns a list of models available to this API Key."""
     try:
         models = []
-        # List all models and filter for 'generateContent' capability
         for m in genai.list_models():
             if 'generateContent' in m.supported_generation_methods:
-                # Clean up the name (remove 'models/' prefix)
                 name = m.name.replace("models/", "")
                 models.append(name)
-        
-        # If the list is empty (rare), return defaults
         if not models:
-            return ["gemini-1.5-flash", "gemini-2.0-flash-exp", "gemini-1.5-pro"]
-            
+            return ["gemini-1.5-flash", "gemini-2.0-flash-exp"]
         return models
-    except Exception as e:
-        print(f"Error listing Gemini models: {e}")
-        # Fallback list if the API fails to list them
-        return ["gemini-1.5-flash", "gemini-2.0-flash-exp", "gemini-1.5-pro"]
+    except:
+        return ["gemini-1.5-flash"]
 
 # --- 2. TOOL FUNCTIONS ---
+
+def get_10k_filing(ticker: str):
+    """
+    Fetches the latest 10-K or 10-Q filing from SEC EDGAR.
+    Returns the 'Business' and 'Management Discussion' sections.
+    """
+    print(f"📄 Fetching SEC filing for: {ticker}")
+    try:
+        # Initialize Company
+        company = Company(ticker)
+        
+        # Try to get 10-K first, then 10-Q
+        filings = company.get_filings(form="10-K")
+        if not filings:
+            filings = company.get_filings(form="10-Q")
+        
+        if not filings:
+            return "No recent 10-K or 10-Q filings found."
+            
+        latest_filing = filings.latest()
+        
+        # Basic Info
+        info = f"**Filing Type:** {latest_filing.form}\n**Date:** {latest_filing.filing_date}\n\n"
+        
+        # Extract Text (Chunking to avoid token limits)
+        # We grab the full text but usually the AI only needs the first 15k chars 
+        # for a quick summary, or specific sections if parsed.
+        # simpler approach: get the text object which cleans HTML
+        full_text = latest_filing.text()
+        
+        # Return the first 20,000 characters (approx 5,000 tokens)
+        # This covers Item 1 (Business) usually.
+        return info + full_text[:20000] + "\n\n...(text truncated for length)..."
+        
+    except Exception as e:
+        return f"Error fetching SEC filing: {str(e)}"
+
 def web_search(query: str):
-    """Searches for news, analyst sentiment, and Bull/Bear thesis."""
     print(f"🔍 Searching: {query}")
     try:
         results = tavily.search(query=query, search_depth="advanced")
@@ -50,12 +82,12 @@ def web_search(query: str):
         return json.dumps({"error": str(e)})
 
 def get_financial_metrics(ticker: str):
-    """Fetches metrics + Mission. Auto-calculates PEG."""
     print(f"📊 Fetching deep data for: {ticker}")
     try:
         stock = yf.Ticker(ticker)
         info = stock.info
         
+        # ... (Keep your existing PEG calculation logic here) ...
         pe_ratio = info.get("trailingPE")
         rev_growth = info.get("revenueGrowth")
         peg_ratio = info.get("pegRatio")
@@ -89,7 +121,7 @@ TOOLS_OPENAI = [
         "type": "function",
         "function": {
             "name": "web_search",
-            "description": "Search for 'Bull case', 'Bear case', and 'Analyst Ratings'.",
+            "description": "Search for news and analyst ratings.",
             "parameters": {
                 "type": "object",
                 "properties": {"query": {"type": "string"}},
@@ -101,7 +133,19 @@ TOOLS_OPENAI = [
         "type": "function",
         "function": {
             "name": "get_financial_metrics",
-            "description": "Get financial data, PEG ratio, and Company Mission.",
+            "description": "Get price, PEG ratio, and growth metrics.",
+            "parameters": {
+                "type": "object",
+                "properties": {"ticker": {"type": "string"}},
+                "required": ["ticker"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_10k_filing",
+            "description": "Get the latest SEC 10-K/10-Q filing text (Business Description, Risks).",
             "parameters": {
                 "type": "object",
                 "properties": {"ticker": {"type": "string"}},
@@ -127,12 +171,16 @@ def run_openai_logic(messages):
             args = json.loads(tool.function.arguments)
             func_name = tool.function.name
             result = ""
+            
             if func_name == "web_search":
                 result = web_search(args["query"])
             elif func_name == "get_financial_metrics":
                 ticker = args["ticker"]
                 found_tickers.append(ticker)
                 result = get_financial_metrics(ticker)
+            elif func_name == "get_10k_filing":
+                ticker = args["ticker"]
+                result = get_10k_filing(ticker)
             
             messages.append({
                 "role": "tool",
@@ -149,12 +197,11 @@ def run_openai_logic(messages):
         
     return assistant_msg.content, found_tickers
 
-# --- 4. GEMINI LOGIC (FIXED) ---
-def run_gemini_logic(messages, model_name="gemini-2.5-flash"):
+# --- 4. GEMINI LOGIC ---
+def run_gemini_logic(messages, model_name="gemini-1.5-flash"):
     chat_history = []
-    system_instruction = "You are a helpful financial analyst."
+    system_instruction = "You are a financial analyst. Use get_10k_filing to read SEC reports when asked."
     
-    # 1. Parse History
     for msg in messages:
         role = msg["role"]
         content = msg["content"]
@@ -166,38 +213,25 @@ def run_gemini_logic(messages, model_name="gemini-2.5-flash"):
             chat_history.append({"role": "model", "parts": [content]})
     
     try:
-        # 2. Init Model
         model = genai.GenerativeModel(
             model_name=model_name,
-            tools=[web_search, get_financial_metrics],
+            # ADD THE NEW TOOL HERE
+            tools=[web_search, get_financial_metrics, get_10k_filing],
             system_instruction=system_instruction
         )
         
-        # 3. Extract last user message (Trigger)
         last_user_msg = "Proceed."
         if chat_history and chat_history[-1]["role"] == "user":
             last_user_msg = chat_history.pop()["parts"][0]
             
-        # 4. Start Chat with AUTOMATIC FUNCTION CALLING ENABLED
-        chat = model.start_chat(
-            history=chat_history,
-            enable_automatic_function_calling=True 
-        )
-        
-        # 5. Send Message (Gemini will run tools internally now)
+        chat = model.start_chat(history=chat_history, enable_automatic_function_calling=True)
         response = chat.send_message(last_user_msg)
-        
-        # 6. Return Text
         return response.text, []
         
-    except NotFound:
-        return f"❌ Error: Model '{model_name}' not found. Please pick a different model from the sidebar.", []
-    except InvalidArgument as e:
-         return f"❌ Error: Invalid Argument. {str(e)}", []
     except Exception as e:
-        return f"❌ Gemini Error: {str(e)}", []
+        return f"❌ Error: {str(e)}", []
 
-# --- 5. MAIN ROUTER ---
+# --- 5. ROUTER ---
 def run_smart_agent(messages, model_choice="gpt-4o"):
     if "gemini" in model_choice.lower():
         return run_gemini_logic(messages, model_choice)
