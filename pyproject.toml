@@ -1,0 +1,18 @@
+[project]
+name = "my-ai-agent"
+version = "0.1.0"
+description = "Market Intelligence Agent"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fpdf>=1.7.2",
+    "ipykernel>=7.1.0",
+    "jupyter>=1.1.1",
+    "openai>=2.14.0",
+    "pandas>=2.3.3",
+    "python-dotenv>=1.2.1",
+    "streamlit>=1.52.2",
+    "tavily-python>=0.7.17",
+    "watchdog>=6.0.0",
+    "yfinance>=1.0",
+]
