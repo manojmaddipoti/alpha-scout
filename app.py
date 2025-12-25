@@ -70,7 +70,7 @@ with st.sidebar:
     # --- MODEL SELECTOR ---
     model_choice = st.selectbox(
         "🧠 AI Model",
-        ["gpt-4o", "gemini-1.5-flash", "gemini-1.5-pro"],
+        ["gpt-4o", "gemini-1.5-flash"],
         index=0
     )
     

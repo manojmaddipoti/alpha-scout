@@ -4,6 +4,7 @@ import yfinance as yf
 from openai import OpenAI
 from tavily import TavilyClient
 import google.generativeai as genai
+from google.api_core.exceptions import NotFound, PermissionDenied
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -12,7 +13,6 @@ load_dotenv()
 openai_client = OpenAI()
 tavily = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
 
-# Configure Gemini
 if os.getenv("GOOGLE_API_KEY"):
     genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 
@@ -61,7 +61,7 @@ def get_financial_metrics(ticker: str):
     except Exception as e:
         return json.dumps({"error": str(e)})
 
-# --- 3. OPENAI SPECIFIC LOGIC ---
+# --- 3. OPENAI LOGIC ---
 TOOLS_OPENAI = [
     {
         "type": "function",
@@ -129,14 +129,13 @@ def run_openai_logic(messages):
         
     return assistant_msg.content, found_tickers
 
-# --- 4. GEMINI SPECIFIC LOGIC ---
+# --- 4. GEMINI LOGIC (Updated) ---
 def run_gemini_logic(messages, model_name="gemini-1.5-flash"):
     """
     Adapts OpenAI message history to Gemini format and runs the agent.
     """
-    # Convert History: OpenAI [{"role": "user"}] -> Gemini Content objects
     chat_history = []
-    system_instruction = ""
+    system_instruction = "You are a helpful financial analyst."
     
     for msg in messages:
         role = msg["role"]
@@ -147,35 +146,37 @@ def run_gemini_logic(messages, model_name="gemini-1.5-flash"):
         elif role == "user":
             chat_history.append({"role": "user", "parts": [content]})
         elif role == "assistant":
-            chat_history.append({"role": "model", "parts": [content]})
+            # Gemini strictly forbids empty assistant messages. 
+            # If we had a tool call before, sometimes content is None.
+            if content: 
+                chat_history.append({"role": "model", "parts": [content]})
     
-    # Initialize Model with Tools (Gemini handles the loop automatically!)
-    model = genai.GenerativeModel(
-        model_name=model_name,
-        tools=[web_search, get_financial_metrics],
-        system_instruction=system_instruction
-    )
-    
-    # Start Chat
-    chat = model.start_chat(history=chat_history)
-    
-    # Send latest message (which is usually the last user prompt)
-    # We need to extract the LAST user message to send as the trigger
-    last_msg = chat_history[-1]["parts"][0]
-    
-    # Note: We need to pop the last message from history so we don't duplicate it in start_chat + send_message
-    # But for simplicity in this bridge, we assume the 'messages' list is full history.
-    # A cleaner way with Gemini is to just send the prompt to a fresh chat if history is maintained externally.
-    
-    response = chat.send_message(last_msg)
-    
-    # Check for tickers in function calls (for the chart)
-    found_tickers = []
-    # Gemini SDK doesn't make it easy to inspect intermediate tool calls in 'automatic' mode easily
-    # So we will try to extract ticker from the text response or valid parts
-    # (Simplified for now: We might miss the chart update on Gemini, but the text will work)
-    
-    return response.text, found_tickers
+    try:
+        # Initialize Model
+        model = genai.GenerativeModel(
+            model_name=model_name,
+            tools=[web_search, get_financial_metrics],
+            system_instruction=system_instruction
+        )
+        
+        # Start Chat with History
+        # Note: We pop the last message to send it as the trigger
+        last_user_msg = "Proceed."
+        if chat_history and chat_history[-1]["role"] == "user":
+            last_user_msg = chat_history.pop()["parts"][0]
+            
+        chat = model.start_chat(history=chat_history)
+        
+        # Send Message
+        response = chat.send_message(last_user_msg)
+        
+        # Extract Text
+        return response.text, []
+        
+    except NotFound:
+        return f"❌ Error: The model '{model_name}' was not found. Please switch to 'gemini-1.5-flash' in the sidebar.", []
+    except Exception as e:
+        return f"❌ Error with Google Gemini: {str(e)}", []
 
 # --- 5. MAIN ROUTER ---
 def run_smart_agent(messages, model_choice="gpt-4o"):
