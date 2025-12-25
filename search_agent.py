@@ -4,7 +4,7 @@ import yfinance as yf
 from openai import OpenAI
 from tavily import TavilyClient
 import google.generativeai as genai
-from google.api_core.exceptions import NotFound, PermissionDenied
+from google.api_core.exceptions import NotFound, PermissionDenied, InvalidArgument
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -13,8 +13,24 @@ load_dotenv()
 openai_client = OpenAI()
 tavily = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
 
+# Configure Gemini with a check
 if os.getenv("GOOGLE_API_KEY"):
     genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+
+# --- HELPER: List Available Models (Debug) ---
+def get_valid_gemini_models():
+    """Returns a list of models available to this API Key."""
+    try:
+        models = []
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                # Strip 'models/' prefix for cleaner UI
+                name = m.name.replace("models/", "")
+                models.append(name)
+        return models
+    except Exception as e:
+        print(f"Error listing Gemini models: {e}")
+        return ["gemini-1.5-flash", "gemini-pro"] # Fallback defaults
 
 # --- 2. TOOL FUNCTIONS ---
 def web_search(query: str):
@@ -27,7 +43,7 @@ def web_search(query: str):
         return json.dumps({"error": str(e)})
 
 def get_financial_metrics(ticker: str):
-    """Fetches metrics + Mission. Auto-calculates PEG if missing."""
+    """Fetches metrics + Mission. Auto-calculates PEG."""
     print(f"📊 Fetching deep data for: {ticker}")
     try:
         stock = yf.Ticker(ticker)
@@ -37,14 +53,13 @@ def get_financial_metrics(ticker: str):
         rev_growth = info.get("revenueGrowth")
         peg_ratio = info.get("pegRatio")
         
-        # Calc PEG if missing
         if peg_ratio is None and pe_ratio is not None and rev_growth is not None:
             try:
                 growth_rate = rev_growth * 100
                 if growth_rate > 0:
                     peg_ratio = round(pe_ratio / growth_rate, 2)
             except:
-                peg_ratio = "N/A (Calc Failed)"
+                peg_ratio = "N/A"
 
         data = {
             "ticker": ticker.upper(),
@@ -101,11 +116,9 @@ def run_openai_logic(messages):
 
     if assistant_msg.tool_calls:
         messages.append(assistant_msg)
-        
         for tool in assistant_msg.tool_calls:
             args = json.loads(tool.function.arguments)
             func_name = tool.function.name
-            
             result = ""
             if func_name == "web_search":
                 result = web_search(args["query"])
@@ -131,52 +144,40 @@ def run_openai_logic(messages):
 
 # --- 4. GEMINI LOGIC (Updated) ---
 def run_gemini_logic(messages, model_name="gemini-1.5-flash"):
-    """
-    Adapts OpenAI message history to Gemini format and runs the agent.
-    """
     chat_history = []
     system_instruction = "You are a helpful financial analyst."
     
     for msg in messages:
         role = msg["role"]
         content = msg["content"]
-        
         if role == "system":
             system_instruction = content
         elif role == "user":
             chat_history.append({"role": "user", "parts": [content]})
-        elif role == "assistant":
-            # Gemini strictly forbids empty assistant messages. 
-            # If we had a tool call before, sometimes content is None.
-            if content: 
-                chat_history.append({"role": "model", "parts": [content]})
+        elif role == "assistant" and content:
+            chat_history.append({"role": "model", "parts": [content]})
     
     try:
-        # Initialize Model
         model = genai.GenerativeModel(
             model_name=model_name,
             tools=[web_search, get_financial_metrics],
             system_instruction=system_instruction
         )
         
-        # Start Chat with History
-        # Note: We pop the last message to send it as the trigger
         last_user_msg = "Proceed."
         if chat_history and chat_history[-1]["role"] == "user":
             last_user_msg = chat_history.pop()["parts"][0]
             
         chat = model.start_chat(history=chat_history)
-        
-        # Send Message
         response = chat.send_message(last_user_msg)
-        
-        # Extract Text
         return response.text, []
         
     except NotFound:
-        return f"❌ Error: The model '{model_name}' was not found. Please switch to 'gemini-1.5-flash' in the sidebar.", []
+        return f"❌ Error: Model '{model_name}' not found. Try 'gemini-1.5-flash-001' or check your API key permissions.", []
+    except InvalidArgument as e:
+         return f"❌ Error: Invalid Argument. {str(e)}", []
     except Exception as e:
-        return f"❌ Error with Google Gemini: {str(e)}", []
+        return f"❌ Gemini Error: {str(e)}", []
 
 # --- 5. MAIN ROUTER ---
 def run_smart_agent(messages, model_choice="gpt-4o"):

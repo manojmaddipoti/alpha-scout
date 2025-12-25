@@ -1,6 +1,6 @@
 import streamlit as st
 import yfinance as yf
-from search_agent import run_smart_agent
+from search_agent import run_smart_agent, get_valid_gemini_models
 import database as db
 from fpdf import FPDF
 import time
@@ -67,10 +67,16 @@ if "current_session_id" not in st.session_state:
 with st.sidebar:
     st.title("✨ Market Agent")
     
-    # --- MODEL SELECTOR ---
+    # --- DYNAMIC MODEL SELECTOR ---
+    # Fetch valid models from Google
+    google_models = get_valid_gemini_models()
+    
+    # Combine with OpenAI options
+    available_models = ["gpt-4o"] + google_models
+    
     model_choice = st.selectbox(
         "🧠 AI Model",
-        ["gpt-4o", "gemini-1.5-flash"],
+        available_models,
         index=0
     )
     
