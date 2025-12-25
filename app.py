@@ -13,7 +13,7 @@ if "db_init" not in st.session_state:
 
 # --- 2. Sidebar ---
 with st.sidebar:
-    st.title("💰 Market Intelligence")
+    st.title("💰 Market AI Intelligence")
     if st.button("🗑️ Reset All Memory"):
         db.clear_db()
         st.rerun()
