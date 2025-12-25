@@ -67,17 +67,14 @@ if "current_session_id" not in st.session_state:
 with st.sidebar:
     st.title("✨ Market Agent")
     
-    # --- DYNAMIC MODEL SELECTOR ---
-    # Fetch valid models from Google
-    google_models = get_valid_gemini_models()
-    
-    # Combine with OpenAI options
-    available_models = ["gpt-4o"] + google_models
-    
+    # --- MODEL SELECTOR (Restricted List) ---
     model_choice = st.selectbox(
         "🧠 AI Model",
-        available_models,
-        index=0
+        [
+            "gpt-4o", 
+            "gemini-2.5-flash" 
+        ],
+        index=1  # Defaults to Gemini 2.5 Flash
     )
     
     # NEW CHAT BUTTON
@@ -87,6 +84,7 @@ with st.sidebar:
         st.rerun()
 
     st.subheader("Recent Chats")
+    
     
     # Load history from DB
     sessions = db.get_all_sessions()

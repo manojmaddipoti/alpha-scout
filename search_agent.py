@@ -150,7 +150,7 @@ def run_openai_logic(messages):
     return assistant_msg.content, found_tickers
 
 # --- 4. GEMINI LOGIC (FIXED) ---
-def run_gemini_logic(messages, model_name="gemini-1.5-flash"):
+def run_gemini_logic(messages, model_name="gemini-2.5-flash"):
     chat_history = []
     system_instruction = "You are a helpful financial analyst."
     
