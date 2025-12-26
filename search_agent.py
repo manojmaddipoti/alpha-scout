@@ -29,50 +29,50 @@ if os.getenv("SEC_IDENTITY"):
     set_identity(os.getenv("SEC_IDENTITY"))
 
 # --- GLOBAL SYSTEM PROMPT (Single Source of Truth) ---
-SYSTEM_PROMPT = """
+SYSTEM_PROMPT = SYSTEM_PROMPT = """
 You are a High-Conviction Investment Analyst managing a "Barbell Strategy" portfolio.
-Your mandate is to beat the Nasdaq-100 (QQQ) by identifying two types of assets:
-1. **Compounders (Alpha):** High-growth stocks (>25% growth) with efficient unit economics.
-2. **Momentum Satellites:** Stocks showing relative strength and technical breakouts.
+Your mandate is to beat the Nasdaq-100 (QQQ) by identifying Compounders (Alpha) and Momentum Satellites.
 
-When analyzing ANY stock, you must apply the following rigorous framework using the provided tools:
+When analyzing ANY stock, you must apply the following rigorous framework:
 
 ### 1. 🏢 Business & Moat (The "Quality" Check)
-- **Business Model:** Summarize what they do. Is it a Platform/Ecosystem or a Point Solution?
-- **Thesis Check (Pivot):** Has there been "Thesis Drift" or a strategic pivot (e.g., Crypto miner shifting to AI Cloud)? Use `web_search` to validate recent news vs. old 10-K data.
-- **Moat:** Does it have high switching costs (Sticky) or Network Effects?
+- **Business Model:** Summarize what they do.
+- **Thesis Check (Pivot):** Has there been "Thesis Drift"? Use `web_search` to validate.
+- **Moat:** Does it have high switching costs or Network Effects?
 
 ### 2. 📊 The "Beat QQQ" Financial Screen
 *Evaluate the stock against these specific benchmarks using `get_financial_metrics`:*
-- **Hyper-Growth:** Is `revenue_growth_yoy` > 25%? (Crucial for beating QQQ).
-- **Efficiency (Rule of 40):** Does the calculated `rule_of_40` score exceed 40?
-- **Shareholder Respect:** Is Stock-Based Compensation (`sbc_percent_revenue`) < 20% of Revenue?
-- **Stickiness (NRR):** Use `web_search` to find "Net Revenue Retention" or "NRR". Is it > 115%? (If unavailable, mark "Unknown").
+- **Hyper-Growth:** Is `revenue_growth_yoy` > 25%?
+- **Efficiency (Rule of 40):** Does `rule_of_40` score exceed 40?
+- **Sales Efficiency (Magic Number):** Check `magic_number`.
+  - **> 1.0:** Efficient (Invest more).
+  - **< 0.7:** **TRAP** (Buying growth inefficiently).
+- **Cash Flow Power:** Does OCF cover CapEx? Check if `capex_coverage_percent` > 80%.
+- **Shareholder Dilution:** Is `share_count_growth_yoy` < 5%?
 - **Margins:** Is `gross_margin` > 70% (Software) or > 50% (Marketplace)?
 
-### 3. 📉 Technicals & Momentum (Timing)
-*Use the technical data provided in `get_financial_metrics`:*
-- **Trend Filter:** Is `price_above_200dma` equal to `True`? (Bullish Signal).
-- **Oscillator:** Is `rsi_14_day` between 50-70 (Healthy) or >75 (Overbought)?
-- **Relative Strength:** Use `web_search` to check "Stock performance vs QQQ last 6 months".
+### 3. 📉 Technicals & Momentum
+- **Trend:** Is `price_above_200dma` True?
+- **RSI:** Is `rsi_14_day` < 75?
 
-### 4. 📜 Official Risks (The Bear Case)
-- **SEC Check:** Use `get_sec_filing` to read the "Risk Factors". Highlight the #1 specific operational risk (not generic boilerplate).
-- **Competition:** Name 2 key rivals. Are they growing faster or slower?
--- **SEC Check:** Use `get_sec_filing` first.
-- **Fallback:** If SEC data is missing, use `web_search` with the query "{TICKER} stock risk factors analysis". DO NOT search for generic "Risk Factors".
+### 4. 📜 Official Risks
+- **SEC Check:** Use `get_sec_filing` for "Risk Factors".
+- **Competition:** Name 2 key rivals.
 
-### 5. ⚖️ Valuation (The Price Tag)
-- **The Metric that Matters:** Focus on the **PEG Ratio (Forward)**.
-  - *Target:* PEG < 1.5 is Cheap; PEG > 2.0 is Expensive.
-- **Cash Runway:** Look at `net_cash`. Does the balance sheet support the burn rate?
+### 5. ⚖️ Valuation
+- **PEG Ratio:** Target PEG < 1.5.
 
 ### 6. 🏛️ Final Verdict (The Scorecard)
-Present a summary "Beat QQQ Scorecard" (e.g., "Score: 4/5") and a definitive action:
-- **STRONG BUY:** Passes Growth (>25%), Rule of 40, and PEG < 2.0. (High Conviction).
-- **MOMENTUM BUY:** Fundamentals are mixed, but Price is > 200DMA and RSI is rising. (Satellite Trade).
-- **HOLD:** Good company but growing < 20% or Valuation is too high (PEG > 2.5).
-- **SELL:** Fails Rule of 40, Thesis Drift, or Revenue Deceleration without Profitability.
+Present a "Beat QQQ Scorecard" and a definitive action.
+**CRITICAL SELL RULES:** You must rate as **SELL** if ANY of the following are true:
+1. **Inefficient Growth:** `magic_number` is < 0.7 (The "Growth Trap").
+2. **Cash Burn:** `capex_coverage_percent` is < 80% (unless <2yr post-IPO).
+3. **Dilution Spiral:** `share_count_growth_yoy` is > 5%.
+4. **Fails Rule of 40** AND Revenue Growth is slowing.
+
+Otherwise:
+- **STRONG BUY:** Growth > 25%, Rule of 40, Magic Number > 1.0, and PEG < 2.0.
+- **HOLD:** Good company but expensive or mixed metrics.
 """
 
 # --- 2. TOOL FUNCTIONS (The "Upgraded" versions) ---
@@ -129,118 +129,153 @@ def get_sec_filing(ticker: str):
 
 def get_financial_metrics(ticker: str):
     """
-    Fetches Price, Valuation, Cash Flow, Rule of 40, CAGRs, 
-    AND Technicals (RSI, 200-SMA) + SBC Analysis.
+    Fetches Valuation, Growth, Technicals, Sell Signals, 
+    AND the SaaS 'Magic Number' (Sales Efficiency).
     """
     print(f"📊 Fetching deep financials & technicals for: {ticker}")
     try:
         stock = yf.Ticker(ticker)
         info = stock.info
+        financials = stock.financials
+        quarterly_financials = stock.quarterly_financials # <--- NEEDED FOR MAGIC NUMBER
+        cashflow = stock.cashflow
         
         # --- 1. Basic Valuation & EPS ---
         fwd_pe = info.get("forwardPE")
         peg = info.get("pegRatio")
-        trailing_eps = info.get("trailingEps")
-        forward_eps = info.get("forwardEps")
         
-        # Fallback PEG Calculation
+        # Fallback PEG
         if peg is None and fwd_pe:
             growth_est = info.get("earningsGrowth", 0)
             if growth_est > 0:
                 peg = round(fwd_pe / (growth_est * 100), 2)
         
-        # --- 2. Advanced Financials (SBC & CAGRs) ---
-        financials = stock.financials
-        cashflow = stock.cashflow
-        
-        # A. Stock-Based Compensation (SBC) as % of Revenue
-        sbc_value = 0
-        sbc_percent = "N/A"
-        try:
-            # Look for SBC in Cash Flow Statement
-            if "Stock Based Compensation" in cashflow.index:
-                sbc_value = cashflow.loc["Stock Based Compensation"].iloc[0]
-            elif "Share Based Compensation" in cashflow.index:
-                sbc_value = cashflow.loc["Share Based Compensation"].iloc[0]
-            
-            total_revenue = info.get("totalRevenue")
-            if total_revenue and sbc_value:
-                # SBC is often a positive add-back in CF, but represents a cost. 
-                # We want the ratio: SBC / Revenue
-                sbc_percent = round((sbc_value / total_revenue) * 100, 2)
-        except Exception:
-            pass
-
-        # B. Revenue & OCF CAGR (3-Year)
+        # --- 2. Advanced Metrics (SBC, CAGRs, CapEx, Dilution, Magic Number) ---
         revenue_cagr_3yr = "N/A"
         ocf_cagr_3yr = "N/A"
-        
+        capex_coverage = "N/A"
+        share_count_growth = "N/A"
+        sbc_percent = "N/A"
+        magic_number = "N/A"
+
         try:
+            # A. SaaS Magic Number (Sales Efficiency)
+            # Formula: (Rev_Q0 - Rev_Q1) * 4 / S&M_Q1
+            if not quarterly_financials.empty and "Total Revenue" in quarterly_financials.index:
+                q_revs = quarterly_financials.loc["Total Revenue"]
+                
+                # Find Sales & Marketing Row (Names vary)
+                sm_row = next((idx for idx in quarterly_financials.index if "Selling" in str(idx) and "Marketing" in str(idx)), None)
+                
+                if sm_row and len(q_revs) >= 2:
+                    rev_q0 = q_revs.iloc[0] # Most recent quarter
+                    rev_q1 = q_revs.iloc[1] # Previous quarter
+                    
+                    sm_expenses = quarterly_financials.loc[sm_row]
+                    sm_q1 = sm_expenses.iloc[1] # Previous quarter S&M
+                    
+                    if sm_q1 > 0:
+                        # Calculate Annualized Net New Revenue
+                        net_new_rev_annualized = (rev_q0 - rev_q1) * 4
+                        # Calculate Magic Number
+                        magic_val = net_new_rev_annualized / sm_q1
+                        magic_number = round(magic_val, 2)
+
+            # B. Revenue CAGR (Annual)
             if "Total Revenue" in financials.index:
-                revenues = financials.loc["Total Revenue"]
-                if len(revenues) >= 4:
-                    curr_rev = revenues.iloc[0]
-                    past_rev = revenues.iloc[3]
-                    if past_rev > 0:
-                        revenue_cagr_3yr = round(((curr_rev / past_rev) ** (1/3) - 1) * 100, 2)
+                revs = financials.loc["Total Revenue"]
+                if len(revs) >= 4:
+                    curr = revs.iloc[0]
+                    past = revs.iloc[3]
+                    if past > 0:
+                        revenue_cagr_3yr = round(((curr / past) ** (1/3) - 1) * 100, 2)
+
+            # C. OCF & CapEx Coverage
+            ocf_val = 0
+            capex_val = 0
             
-            # Find OCF row safely
             ocf_row = next((idx for idx in cashflow.index if "Operating" in str(idx) and "Cash" in str(idx)), None)
             if ocf_row:
+                ocf_val = cashflow.loc[ocf_row].iloc[0]
                 ocfs = cashflow.loc[ocf_row]
-                if len(ocfs) >= 4:
-                    curr_ocf = ocfs.iloc[0]
-                    past_ocf = ocfs.iloc[3]
-                    if past_ocf > 0 and curr_ocf > 0:
-                        ocf_cagr_3yr = round(((curr_ocf / past_ocf) ** (1/3) - 1) * 100, 2)
-        except Exception:
-            pass
+                if len(ocfs) >= 4 and ocfs.iloc[3] > 0:
+                    ocf_cagr_3yr = round(((ocfs.iloc[0] / ocfs.iloc[3]) ** (1/3) - 1) * 100, 2)
 
-        # --- 3. Technical Analysis (RSI & 200-SMA) ---
-        # We need historical price data for this
-        history = stock.history(period="1y") # 1 year of data
+            capex_row = next((idx for idx in cashflow.index if "Capital" in str(idx) and "Expenditure" in str(idx)), None)
+            if not capex_row:
+                 capex_row = next((idx for idx in cashflow.index if "Purchase" in str(idx) and "PPE" in str(idx)), None)
+            
+            if capex_row:
+                capex_val = cashflow.loc[capex_row].iloc[0]
+
+            if capex_val != 0:
+                coverage = ocf_val / abs(capex_val)
+                capex_coverage = round(coverage * 100, 2)
+
+            # D. Share Count Growth
+            shares_row = next((idx for idx in financials.index if "Diluted Average Shares" in str(idx)), None)
+            if not shares_row:
+                shares_row = next((idx for idx in financials.index if "Basic Average Shares" in str(idx)), None)
+            
+            if shares_row:
+                shares = financials.loc[shares_row]
+                if len(shares) >= 2:
+                    curr_shares = shares.iloc[0]
+                    last_year_shares = shares.iloc[1]
+                    if last_year_shares > 0:
+                        growth = (curr_shares / last_year_shares) - 1
+                        share_count_growth = round(growth * 100, 2)
+
+            # E. SBC %
+            sbc_row = next((idx for idx in cashflow.index if "Stock" in str(idx) and "Compensation" in str(idx)), None)
+            if sbc_row and info.get("totalRevenue"):
+                sbc_val = cashflow.loc[sbc_row].iloc[0]
+                sbc_percent = round((sbc_val / info.get("totalRevenue")) * 100, 2)
+
+        except Exception as e:
+            print(f"Warning on advanced metrics: {e}")
+
+        # --- 3. Technicals & Rule of 40 ---
+        history = stock.history(period="1y")
         price_above_200dma = "N/A"
         rsi_14 = "N/A"
-        
         if not history.empty and len(history) > 200:
-            # 200-Day Moving Average
             sma_200 = history["Close"].rolling(window=200).mean().iloc[-1]
-            current_price = history["Close"].iloc[-1]
-            price_above_200dma = True if current_price > sma_200 else False
+            price_above_200dma = True if history["Close"].iloc[-1] > sma_200 else False
             
-            # RSI (14-Day)
             delta = history["Close"].diff()
             gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
             loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
             rs = gain / loss
             rsi_14 = round(100 - (100 / (1 + rs.iloc[-1])), 2)
 
-        # --- 4. Rule of 40 Calculation ---
         rule_of_40 = "N/A"
         rev_growth = info.get("revenueGrowth", 0)
         fcf_margin = 0
-        
         if info.get("totalRevenue") and info.get("freeCashflow"):
             fcf_margin = info.get("freeCashflow") / info.get("totalRevenue")
-        else:
-            fcf_margin = info.get("ebitdaMargins", 0)
-
+        elif info.get("ebitdaMargins"):
+            fcf_margin = info.get("ebitdaMargins")
+            
         if rev_growth is not None:
             rule_of_40 = round((rev_growth * 100) + (fcf_margin * 100), 2)
 
-        # --- 5. Return Data Payload ---
+        # --- Payload ---
         data = {
             "ticker": ticker.upper(),
             "price": info.get("currentPrice"),
             "market_cap": info.get("marketCap"),
             "forward_pe": fwd_pe,
             "peg_ratio": peg,
-            "sbc_percent_revenue": sbc_percent,  # <--- NEW
-            "price_above_200dma": price_above_200dma, # <--- NEW
-            "rsi_14_day": rsi_14, # <--- NEW
+            "magic_number": magic_number,           # <--- NEW
             "revenue_growth_yoy": round(rev_growth * 100, 2) if rev_growth else "N/A",
             "revenue_cagr_3yr": revenue_cagr_3yr,
+            "capex_coverage_percent": capex_coverage,
+            "share_count_growth_yoy": share_count_growth,
+            "sbc_percent_revenue": sbc_percent,
             "rule_of_40": rule_of_40,
+            "price_above_200dma": price_above_200dma,
+            "rsi_14_day": rsi_14,
             "gross_margin": round(info.get("grossMargins", 0) * 100, 2),
             "net_cash": (info.get("totalCash", 0) or 0) - (info.get("totalDebt", 0) or 0),
             "business_summary": info.get("longBusinessSummary")
