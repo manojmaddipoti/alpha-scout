@@ -129,9 +129,13 @@ def create_pdf(text):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", size=12)
+    # Clean up standard markdown markers for PDF
     clean_text = text.replace("**", "").replace("##", "").replace("###", "")
+    # Latin-1 encoding handles standard text better in FPDF
     pdf.multi_cell(0, 10, clean_text.encode('latin-1', 'replace').decode('latin-1'))
-    return pdf.output(dest='S').encode('latin-1')
+    
+    # fpdf2's default output is now bytes compatible
+    return bytes(pdf.output())
 
 # --- 7. MAIN CHAT INTERFACE ---
 # Render history
