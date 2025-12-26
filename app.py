@@ -1,6 +1,7 @@
 import streamlit as st
 import yfinance as yf
-from search_agent import run_smart_agent, get_valid_gemini_models
+# CORRECTED IMPORT: Added SYSTEM_PROMPT
+from search_agent import run_smart_agent, get_valid_gemini_models, SYSTEM_PROMPT 
 import database as db
 from fpdf import FPDF
 import time
@@ -67,14 +68,15 @@ if "current_session_id" not in st.session_state:
 with st.sidebar:
     st.title("✨ Market Agent")
     
-    # --- MODEL SELECTOR (Restricted List) ---
+    # --- MODEL SELECTOR ---
     model_choice = st.selectbox(
         "🧠 AI Model",
         [
-            "gpt-4o", 
-            "gemini-2.5-flash" 
+            "gpt-4o",              # Best OpenAI Model for Agents
+            "gemini-1.5-pro",      # Best Google Model for Deep Analysis
+            "gemini-2.0-flash-exp" # (Optional) The latest experimental fast model
         ],
-        index=1  # Defaults to Gemini 2.5 Flash
+        index=0
     )
     
     # NEW CHAT BUTTON
@@ -85,15 +87,10 @@ with st.sidebar:
 
     st.subheader("Recent Chats")
     
-    
     # Load history from DB
     sessions = db.get_all_sessions()
     
-    # Remove empty sessions (Cleanup logic)
-    # (Optional: You could add a db.cleanup_empty_sessions() function in database.py)
-
     for s_id, s_title in sessions:
-        # Determine button style (Outline vs Primary)
         if s_id == st.session_state.current_session_id:
             if st.button(f"🟢 {s_title}", key=s_id, use_container_width=True):
                 pass # Already active
@@ -109,45 +106,13 @@ with st.sidebar:
             st.session_state.current_session_id = None
             st.rerun()
 
-# --- 5. SYSTEM PROMPT ---
-SYSTEM_PROMPT = """
-You are an Expert Investment Analyst at a top-tier Hedge Fund.
-Your mandate is to provide a deep, data-driven investment memo for ANY stock (Tech, Retail, Energy, etc.).
-
-### 1. 🏢 Business & Moat
-- **What do they do?** Summarize the business model and their "Economic Moat" (Competitive Advantage).
-- **Strategy:** Use `web_search` to find recent major news (earnings surprises, new products, M&A).
-
-### 2. 💰 Financial Health (The "Real" Numbers)
-- **Solvency Check:** Compare `Total Cash` vs. `Total Debt`. Is the balance sheet healthy?
-- **Profitability:** Look at Margins and `Free Cash Flow`. Are they burning cash or generating it?
-- **Growth:** Analyze Revenue Growth vs. the PEG Ratio.
-
-### 3. 📜 Official Risks (SEC Filings)
-- Use `get_sec_filing` to read the "Risk Factors" or "Management Discussion" from the latest 10-K/20-F.
-- Highlight the #1 specific risk the company warns about (not generic market risks).
-
-### 4. 🐂 Bull & Bear Analysis
-- **Bull & Bear:** List 3 distinct reasons for each side.
-
-### 5. 🐻 Competition
-- **Competition:** List 3 key competitors and their revenue growth rates.
-
-### 6. ⚖️ Valuation & Verdict
-- Present a Markdown Table: Price, Market Cap, Forward P/E, PEG Ratio, Net Cash Position.
-- **Verdict:** Buy, Hold, or Sell.
-  - **Buy:** If fundamentals are strong + valuation is reasonable.
-  - **Hold:** If great company but not enough growth and cash generation is low.
-  - **Sell:** If broken thesis or insolvency risk.
-"""
-
+# --- 5. SYSTEM PROMPT LOGIC ---
 # Load Messages Logic
 if st.session_state.current_session_id is None:
-    # We are in "New Chat" mode (Ghost mode)
-    # We don't save the system prompt to DB yet, just keep it in memory
+    # New Chat: Use the imported SYSTEM_PROMPT from search_agent.py
     st.session_state.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 else:
-    # We are in an existing chat, load from DB
+    # Existing Chat: Load history from DB
     st.session_state.messages = db.load_messages(st.session_state.current_session_id)
 
 # --- 6. HELPERS (Charts & PDF) ---
@@ -164,22 +129,19 @@ def create_pdf(text):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", size=12)
-    # Clean up standard markdown markers for PDF
     clean_text = text.replace("**", "").replace("##", "").replace("###", "")
-    # Latin-1 encoding handles standard text better in FPDF
     pdf.multi_cell(0, 10, clean_text.encode('latin-1', 'replace').decode('latin-1'))
     return pdf.output(dest='S').encode('latin-1')
 
 # --- 7. MAIN CHAT INTERFACE ---
-# Render history first
+# Render history
 for i, message in enumerate(st.session_state.messages):
     if message["role"] != "system":
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
             
-            # PDF BUTTON (Render for every assistant message)
+            # PDF BUTTON
             if message["role"] == "assistant":
-                # Create a unique key for each button using the loop index
                 pdf_data = create_pdf(message["content"])
                 st.download_button(
                     label="⬇️ Download PDF",
@@ -192,12 +154,10 @@ for i, message in enumerate(st.session_state.messages):
 # --- 8. INPUT HANDLER ---
 if prompt := st.chat_input("Ask about a stock (e.g., 'Analyze Nvidia')"):
     
-    # A. LAZY CREATION: If this is a new chat, create the DB entry NOW
+    # A. LAZY CREATION: Create DB entry on first message
     if st.session_state.current_session_id is None:
-        # Generate a title from the prompt
         short_title = (prompt[:20] + "..") if len(prompt) > 20 else prompt
         st.session_state.current_session_id = db.create_session(short_title)
-        # Save the system prompt to this new ID
         db.save_message(st.session_state.current_session_id, "system", SYSTEM_PROMPT)
 
     # B. Render User Message
@@ -235,6 +195,5 @@ if prompt := st.chat_input("Ask about a stock (e.g., 'Analyze Nvidia')"):
 
     # D. Save & Refresh
     db.save_message(st.session_state.current_session_id, "assistant", response_text)
-    # We rerun to make the new session appear in the sidebar immediately
-    time.sleep(0.5) # Small buffer for DB
+    time.sleep(0.5) 
     st.rerun()
