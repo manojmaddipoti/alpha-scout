@@ -51,16 +51,20 @@ When analyzing ANY stock, you must apply the following rigorous framework:
 - **Shareholder Dilution:** Is `share_count_growth_yoy` < 5%?
 - **Margins:** Is `gross_margin` > 70% (Software) or > 50% (Marketplace)?
 
-### 3. 📉 Technicals & Momentum
+### 3. Bull & Bear Analysis
+- **Bull:** List 3 reasons why the stock is a good investment.
+- **Bear:** List 3 reasons why the stock is a bad investment.
+- **Competition:** List 3 key competitors and their growth rates.
+- **Valuation:** List 3 key valuation metrics and their targets.
+
+
+### 4. 📉 Technicals & Momentum
 - **Trend:** Is `price_above_200dma` True?
 - **RSI:** Is `rsi_14_day` < 75?
 
-### 4. 📜 Official Risks
+### 5. 📜 Official Risks
 - **SEC Check:** Use `get_sec_filing` for "Risk Factors".
 - **Competition:** Name 2 key rivals.
-
-### 5. ⚖️ Valuation
-- **PEG Ratio:** Target PEG < 1.5.
 
 ### 6. 🏛️ Final Verdict (The Scorecard)
 Present a "Beat QQQ Scorecard" and a definitive action.
