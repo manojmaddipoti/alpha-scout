@@ -72,11 +72,11 @@ with st.sidebar:
     model_choice = st.selectbox(
         "🧠 AI Model",
         [
-            "gpt-4o",              # Best OpenAI Model for Agents
-            "gemini-1.5-pro",      # Best Google Model for Deep Analysis
-            "gemini-2.0-flash-exp" # (Optional) The latest experimental fast model
+            "gpt-4o",                            # OpenAI: Best Agent Orchestrator
+            "gemini-3-pro-preview",              # Google: Best General Reasoning (IQ)
+            "deep-research-pro-preview-12-2025"  # Google: Best for SEC/Document Research
         ],
-        index=0
+        index=1  # Default to Gemini 3 Pro
     )
     
     # NEW CHAT BUTTON

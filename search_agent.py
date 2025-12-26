@@ -59,6 +59,8 @@ When analyzing ANY stock, you must apply the following rigorous framework using 
 ### 4. 📜 Official Risks (The Bear Case)
 - **SEC Check:** Use `get_sec_filing` to read the "Risk Factors". Highlight the #1 specific operational risk (not generic boilerplate).
 - **Competition:** Name 2 key rivals. Are they growing faster or slower?
+-- **SEC Check:** Use `get_sec_filing` first.
+- **Fallback:** If SEC data is missing, use `web_search` with the query "{TICKER} stock risk factors analysis". DO NOT search for generic "Risk Factors".
 
 ### 5. ⚖️ Valuation (The Price Tag)
 - **The Metric that Matters:** Focus on the **PEG Ratio (Forward)**.
@@ -397,21 +399,13 @@ def run_gemini_logic(messages, model_name="gemini-2.5-flash"):
 # --- HELPER: List Available Models ---
 def get_valid_gemini_models():
     """
-    Fetches available Gemini models.
-    Returns the best hardcoded options if the dynamic fetch fails.
+    Returns the best hardcoded options available in your environment.
     """
-    try:
-        models = []
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                name = m.name.replace("models/", "")
-                models.append(name)
-        if not models:
-            # FALLBACK: These are the exact strings you need
-            return ["gemini-1.5-pro", "gemini-2.0-flash-exp", "gemini-1.5-flash"]
-        return models
-    except Exception:
-        return ["gemini-1.5-pro", "gemini-2.0-flash-exp", "gemini-1.5-flash"]
+    return [
+        "gemini-3-pro-preview", 
+        "deep-research-pro-preview-12-2025", 
+        "gemini-2.5-flash" # Keep a fast one just in case
+    ]
 
 # --- 5. MAIN ROUTER ---
 # Decides which logic to run based on the user's selection in the UI.
