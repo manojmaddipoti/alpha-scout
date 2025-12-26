@@ -319,6 +319,24 @@ def run_gemini_logic(messages, model_name="gemini-2.5-flash"):
         
     except Exception as e:
         return f"❌ Error: {str(e)}", []
+# --- HELPER: List Available Models ---
+def get_valid_gemini_models():
+    """
+    Fetches available Gemini models that support content generation.
+    Falls back to a default list if the API fails.
+    """
+    try:
+        models = []
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                name = m.name.replace("models/", "")
+                models.append(name)
+        if not models:
+            return ["gemini-1.5-flash", "gemini-2.0-flash-exp","gemini-2.5-flash"]
+        return models
+    except Exception:
+        # Fallback if API key is invalid or network fails
+        return ["gemini-1.5-flash", "gemini-2.0-flash-exp","gemini-2.5-flash"]
 
 # --- 5. MAIN ROUTER ---
 def run_smart_agent(messages, model_choice="gpt-4o"):
