@@ -12,24 +12,25 @@ from edgar import Company, set_identity
 # Load environment variables (API keys) from the .env file
 load_dotenv()
 
-# --- 1. SETUP CLIENTS ---
-# Initialize OpenAI client. It looks for 'OPENAI_API_KEY' in environment variables automatically.
-openai_client = OpenAI()
+# --- 1. SAFE SETUP (Lazy Loading) ---
+# We initialize clients inside functions to prevent "Crash on Import" in Docker.
 
-# Initialize Tavily client for web searching. Requires 'TAVILY_API_KEY'.
-tavily = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
+def get_openai_client():
+    return OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# Configure Google Generative AI (Gemini) if the key exists.
-if os.getenv("GOOGLE_API_KEY"):
-    genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+def get_tavily_client():
+    return TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
 
-# Set SEC Identity. This is MANDATORY to prevent the SEC from blocking your IP.
-# Format: "Name email@domain.com"
+def configure_gemini():
+    if os.getenv("GOOGLE_API_KEY"):
+        genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+
+# Set SEC Identity immediately (Lightweight and safe)
 if os.getenv("SEC_IDENTITY"):
     set_identity(os.getenv("SEC_IDENTITY"))
 
 # --- GLOBAL SYSTEM PROMPT (Single Source of Truth) ---
-SYSTEM_PROMPT = SYSTEM_PROMPT = """
+SYSTEM_PROMPT = """
 You are a High-Conviction Investment Analyst managing a "Barbell Strategy" portfolio.
 Your mandate is to beat the Nasdaq-100 (QQQ) by identifying Compounders (Alpha) and Momentum Satellites.
 
@@ -57,7 +58,6 @@ When analyzing ANY stock, you must apply the following rigorous framework:
 - **Competition:** List 3 key competitors and their growth rates.
 - **Valuation:** List 3 key valuation metrics and their targets.
 
-
 ### 4. 📉 Technicals & Momentum
 - **Trend:** Is `price_above_200dma` True?
 - **RSI:** Is `rsi_14_day` < 75?
@@ -79,33 +79,25 @@ Otherwise:
 - **HOLD:** Good company but expensive or mixed metrics.
 """
 
-# --- 2. TOOL FUNCTIONS (The "Upgraded" versions) ---
-# These functions act as the "tools" the AI can use to fetch external data.
+# --- 2. TOOL FUNCTIONS ---
 
 def get_sec_filing(ticker: str):
     """
     Smart fetcher for 10-K/10-Q (US) or 20-F/6-K (Foreign) filings.
-    It compares dates to prioritize the absolute latest strategic update.
     """
     print(f"📄 Fetching SEC/Foreign filing for: {ticker}")
     try:
         company = Company(ticker)
         
-        # 1. Strategy: Try to find the most recent "Annual" report first
-        # US companies file 10-K; Foreign Private Issuers file 20-F.
         filings = company.get_filings(form=["10-K", "20-F"])
         latest_annual = filings.latest() if filings else None
         
-        # 2. Check for very recent Quarterly/Material updates (10-Q or 6-K)
-        # Foreign companies use 6-K for earnings and major announcements between annual reports.
         quarterly_filings = company.get_filings(form=["10-Q", "6-K"])
         latest_update = quarterly_filings.latest() if quarterly_filings else None
         
         doc_text = ""
         source_used = "None"
         
-        # Decision Logic: If the 6-K/10-Q is newer than the Annual, use IT for the pivot news.
-        # This helps catch recent strategy shifts (like "Bitcoin -> AI") that aren't in last year's 10-K.
         if latest_update and latest_annual:
             if latest_update.filing_date > latest_annual.filing_date:
                 doc_text = latest_update.text()
@@ -123,8 +115,6 @@ def get_sec_filing(ticker: str):
         if not doc_text:
             return "No recent SEC filings found."
 
-        # Return the Source + First 25k chars.
-        # 25k chars is usually enough to capture "Item 1. Business" and "Item 1A. Risk Factors".
         return f"**Source:** {source_used}\n\n**Filing Text:**\n{doc_text[:25000]}..."
 
     except Exception as e:
@@ -141,20 +131,19 @@ def get_financial_metrics(ticker: str):
         stock = yf.Ticker(ticker)
         info = stock.info
         financials = stock.financials
-        quarterly_financials = stock.quarterly_financials # <--- NEEDED FOR MAGIC NUMBER
+        quarterly_financials = stock.quarterly_financials
         cashflow = stock.cashflow
         
         # --- 1. Basic Valuation & EPS ---
         fwd_pe = info.get("forwardPE")
         peg = info.get("pegRatio")
         
-        # Fallback PEG
         if peg is None and fwd_pe:
             growth_est = info.get("earningsGrowth", 0)
             if growth_est > 0:
                 peg = round(fwd_pe / (growth_est * 100), 2)
         
-        # --- 2. Advanced Metrics (SBC, CAGRs, CapEx, Dilution, Magic Number) ---
+        # --- 2. Advanced Metrics ---
         revenue_cagr_3yr = "N/A"
         ocf_cagr_3yr = "N/A"
         capex_coverage = "N/A"
@@ -163,29 +152,23 @@ def get_financial_metrics(ticker: str):
         magic_number = "N/A"
 
         try:
-            # A. SaaS Magic Number (Sales Efficiency)
-            # Formula: (Rev_Q0 - Rev_Q1) * 4 / S&M_Q1
+            # A. SaaS Magic Number
             if not quarterly_financials.empty and "Total Revenue" in quarterly_financials.index:
                 q_revs = quarterly_financials.loc["Total Revenue"]
-                
-                # Find Sales & Marketing Row (Names vary)
                 sm_row = next((idx for idx in quarterly_financials.index if "Selling" in str(idx) and "Marketing" in str(idx)), None)
                 
                 if sm_row and len(q_revs) >= 2:
-                    rev_q0 = q_revs.iloc[0] # Most recent quarter
-                    rev_q1 = q_revs.iloc[1] # Previous quarter
-                    
+                    rev_q0 = q_revs.iloc[0]
+                    rev_q1 = q_revs.iloc[1]
                     sm_expenses = quarterly_financials.loc[sm_row]
-                    sm_q1 = sm_expenses.iloc[1] # Previous quarter S&M
+                    sm_q1 = sm_expenses.iloc[1]
                     
                     if sm_q1 > 0:
-                        # Calculate Annualized Net New Revenue
                         net_new_rev_annualized = (rev_q0 - rev_q1) * 4
-                        # Calculate Magic Number
                         magic_val = net_new_rev_annualized / sm_q1
                         magic_number = round(magic_val, 2)
 
-            # B. Revenue CAGR (Annual)
+            # B. Revenue CAGR
             if "Total Revenue" in financials.index:
                 revs = financials.loc["Total Revenue"]
                 if len(revs) >= 4:
@@ -271,7 +254,7 @@ def get_financial_metrics(ticker: str):
             "market_cap": info.get("marketCap"),
             "forward_pe": fwd_pe,
             "peg_ratio": peg,
-            "magic_number": magic_number,           # <--- NEW
+            "magic_number": magic_number,
             "revenue_growth_yoy": round(rev_growth * 100, 2) if rev_growth else "N/A",
             "revenue_cagr_3yr": revenue_cagr_3yr,
             "capex_coverage_percent": capex_coverage,
@@ -291,17 +274,17 @@ def get_financial_metrics(ticker: str):
 def web_search(query: str):
     """
     Searches the web for recent news using Tavily.
-    Topic is set to 'news' to filter out generic blog spam.
     """
     print(f"🔍 Searching: {query}")
     try:
+        # Initialize client here (Lazy Load)
+        tavily = get_tavily_client()
         results = tavily.search(query=query, topic="news", search_depth="advanced")
         return json.dumps(results)
     except Exception as e:
         return json.dumps({"error": str(e)})
 
 # --- 3. OPENAI LOGIC (The "Manual" Loop) ---
-# OpenAI requires us to manually define the tool schema and handle the tool execution loop.
 
 TOOLS_OPENAI = [
     {
@@ -345,10 +328,12 @@ TOOLS_OPENAI = [
 def run_openai_logic(messages):
     """
     Executes the 'manual' function calling loop for OpenAI.
-    1. Send Prompt -> 2. AI requests Tool -> 3. We run Tool -> 4. Send Tool Output -> 5. AI answers.
     """
+    # Initialize client here (Lazy Load)
+    client = get_openai_client()
+    
     # 1. First Call: Ask GPT-4o what to do
-    response = openai_client.chat.completions.create(
+    response = client.chat.completions.create(
         model="gpt-4o",
         messages=messages,
         tools=TOOLS_OPENAI
@@ -361,7 +346,7 @@ def run_openai_logic(messages):
     if assistant_msg.tool_calls:
         messages.append(assistant_msg) # Add the "intent" to history
         
-        # Loop through all requested tools (it might ask for multiple)
+        # Loop through all requested tools
         for tool in assistant_msg.tool_calls:
             args = json.loads(tool.function.arguments)
             func_name = tool.function.name
@@ -387,7 +372,7 @@ def run_openai_logic(messages):
             })
             
         # 3. Second Call: GPT generates the final answer with the tool data
-        final_response = openai_client.chat.completions.create(
+        final_response = client.chat.completions.create(
             model="gpt-4o",
             messages=messages
         )
@@ -396,10 +381,12 @@ def run_openai_logic(messages):
     return assistant_msg.content, found_tickers
 
 # --- 4. GEMINI LOGIC (The "Automatic" Loop) ---
-# Gemini SDK handles the tool execution loop automatically if we pass the functions directly.
 
 def run_gemini_logic(messages, model_name="gemini-2.5-flash"):
     chat_history = []
+    
+    # Configure Gemini here (Lazy Load)
+    configure_gemini()
     
     # Updated Instruction for Deep Analysis
     system_instruction = SYSTEM_PROMPT
@@ -443,14 +430,12 @@ def get_valid_gemini_models():
     return [
         "gemini-3-pro-preview", 
         "deep-research-pro-preview-12-2025", 
-        "gemini-2.5-flash" # Keep a fast one just in case
+        "gemini-2.5-flash"
     ]
 
 # --- 5. MAIN ROUTER ---
-# Decides which logic to run based on the user's selection in the UI.
 def run_smart_agent(messages, model_choice="gpt-4o"):
     if "gemini" in model_choice.lower():
         return run_gemini_logic(messages, model_choice)
     else:
-        # This calls the OpenAI logic defined above
         return run_openai_logic(messages)
