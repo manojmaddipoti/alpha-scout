@@ -7,14 +7,13 @@ from tavily import TavilyClient
 import google.generativeai as genai
 from google.api_core.exceptions import NotFound, InvalidArgument
 from dotenv import load_dotenv
-from edgar import Company, set_identity
+
+# REMOVED: from edgar import Company, set_identity (Moved inside function)
 
 # Load environment variables (API keys) from the .env file
 load_dotenv()
 
 # --- 1. SAFE SETUP (Lazy Loading) ---
-# We initialize clients inside functions to prevent "Crash on Import" in Docker.
-
 def get_openai_client():
     return OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
@@ -25,9 +24,7 @@ def configure_gemini():
     if os.getenv("GOOGLE_API_KEY"):
         genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 
-# Set SEC Identity immediately (Lightweight and safe)
-if os.getenv("SEC_IDENTITY"):
-    set_identity(os.getenv("SEC_IDENTITY"))
+# REMOVED: SEC Identity setup here. It will be done inside the function.
 
 # --- GLOBAL SYSTEM PROMPT (Single Source of Truth) ---
 SYSTEM_PROMPT = """
@@ -84,9 +81,18 @@ Otherwise:
 def get_sec_filing(ticker: str):
     """
     Smart fetcher for 10-K/10-Q (US) or 20-F/6-K (Foreign) filings.
+    Uses Lazy Loading for 'edgar' to prevent startup crashes.
     """
     print(f"📄 Fetching SEC/Foreign filing for: {ticker}")
     try:
+        # --- LAZY IMPORT (The Fix) ---
+        from edgar import Company, set_identity
+        
+        # Initialize Identity just in time
+        if os.getenv("SEC_IDENTITY"):
+            set_identity(os.getenv("SEC_IDENTITY"))
+        # -----------------------------
+
         company = Company(ticker)
         
         filings = company.get_filings(form=["10-K", "20-F"])
