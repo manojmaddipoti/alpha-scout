@@ -1,0 +1,65 @@
+# Python virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Git files
+.git/
+.gitignore
+.github/
+
+# Environment files (secrets should be in App Runner env vars)
+.env
+.env.*
+*.env
+
+# Python cache and compiled files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Testing and documentation
+tests/
+test_*.py
+*.md
+LICENSE
+docs/
+
+# Local database (you don't want to copy local DB to container)
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+
+# Docker files (no need to copy these into the image)
+Dockerfile
+.dockerignore
+docker-compose.yml
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+
+# Other
+*.bak
+*.tmp
+.coverage
+htmlcov/
