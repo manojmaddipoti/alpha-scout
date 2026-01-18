@@ -3,7 +3,7 @@ import json
 import yfinance as yf
 from openai import OpenAI
 from tavily import TavilyClient
-import google.generativeai as genai
+from google import genai
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -21,11 +21,11 @@ def get_tavily_client():
         raise ValueError("TAVILY_API_KEY not found")
     return TavilyClient(api_key=api_key)
 
-def configure_gemini():
+def get_gemini_client():
     api_key = os.getenv("GOOGLE_API_KEY")
     if not api_key:
         raise ValueError("GOOGLE_API_KEY not found")
-    genai.configure(api_key=api_key)
+    return genai.Client(api_key=api_key)
 
 # System Prompt
 SYSTEM_PROMPT = """
@@ -376,34 +376,111 @@ def run_openai_logic(messages):
 
 # Gemini Agent Logic
 
-def run_gemini_logic(messages, model_name="gemini-2.5-flash"):
-    """Execute Gemini function calling logic."""
+def run_gemini_logic(messages, model_name="gemini-2.0-flash-exp"):
+    """Execute Gemini function calling logic using new google.genai package."""
     try:
-        chat_history = []
-        configure_gemini()
+        client = get_gemini_client()
+
+        # Build conversation history
+        contents = []
         system_instruction = SYSTEM_PROMPT
+
         for msg in messages:
             role = msg["role"]
             content = msg["content"]
             if role == "system":
                 system_instruction = content
             elif role == "user":
-                chat_history.append({"role": "user", "parts": [content]})
+                contents.append({"role": "user", "parts": [{"text": content}]})
             elif role == "assistant" and content:
-                chat_history.append({"role": "model", "parts": [content]})
-        
-        model = genai.GenerativeModel(
-            model_name=model_name,
-            tools=[web_search, get_financial_metrics, get_sec_filing],
-            system_instruction=system_instruction
-        )
-        
-        last_user_msg = "Proceed."
-        if chat_history and chat_history[-1]["role"] == "user":
-            last_user_msg = chat_history.pop()["parts"][0]
+                contents.append({"role": "model", "parts": [{"text": content}]})
 
-        chat = model.start_chat(history=chat_history, enable_automatic_function_calling=True)
-        response = chat.send_message(last_user_msg)
+        # Define tools in new format
+        tools = [
+            {
+                "function_declarations": [
+                    {
+                        "name": "web_search",
+                        "description": "Search for news and analyst ratings.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "query": {"type": "string", "description": "Search query"}
+                            },
+                            "required": ["query"]
+                        }
+                    },
+                    {
+                        "name": "get_financial_metrics",
+                        "description": "Get price, PEG ratio, and growth metrics for a stock ticker.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "ticker": {"type": "string", "description": "Stock ticker symbol"}
+                            },
+                            "required": ["ticker"]
+                        }
+                    },
+                    {
+                        "name": "get_sec_filing",
+                        "description": "Get the latest SEC 10-K/10-Q/20-F filing text.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "ticker": {"type": "string", "description": "Stock ticker symbol"}
+                            },
+                            "required": ["ticker"]
+                        }
+                    }
+                ]
+            }
+        ]
+
+        # Generate content with automatic function calling
+        response = client.models.generate_content(
+            model=model_name,
+            contents=contents,
+            config={
+                "system_instruction": system_instruction,
+                "tools": tools,
+                "temperature": 0.7,
+            }
+        )
+
+        # Handle function calls if any
+        if response.candidates and response.candidates[0].content.parts:
+            for part in response.candidates[0].content.parts:
+                if hasattr(part, 'function_call'):
+                    func_call = part.function_call
+                    func_name = func_call.name
+                    func_args = dict(func_call.args)
+
+                    # Execute the function
+                    result = ""
+                    if func_name == "web_search":
+                        result = web_search(func_args["query"])
+                    elif func_name == "get_financial_metrics":
+                        result = get_financial_metrics(func_args["ticker"])
+                    elif func_name == "get_sec_filing":
+                        result = get_sec_filing(func_args["ticker"])
+
+                    # Add function result to conversation
+                    contents.append({
+                        "role": "model",
+                        "parts": [{"function_call": {"name": func_name, "args": func_args}}]
+                    })
+                    contents.append({
+                        "role": "user",
+                        "parts": [{"function_response": {"name": func_name, "response": {"result": result}}}]
+                    })
+
+            # Generate final response after function calls
+            final_response = client.models.generate_content(
+                model=model_name,
+                contents=contents,
+                config={"system_instruction": system_instruction}
+            )
+            return final_response.text, []
 
         return response.text, []
 
@@ -414,9 +491,9 @@ def run_gemini_logic(messages, model_name="gemini-2.5-flash"):
 def get_valid_gemini_models():
     """Return available Gemini model options."""
     return [
-        "gemini-3-pro-preview",
-        "deep-research-pro-preview-12-2025",
-        "gemini-2.5-flash"
+        "gemini-2.0-flash-exp",
+        "gemini-1.5-pro",
+        "gemini-1.5-flash"
     ]
 
 # Main Agent Router

@@ -64,8 +64,8 @@ with st.sidebar:
         "AI Model",
         [
             "gpt-4o",
-            "gemini-3-pro-preview",
-            "deep-research-pro-preview-12-2025"
+            "gemini-2.0-flash-exp",
+            "gemini-1.5-pro"
         ],
         index=1
     )

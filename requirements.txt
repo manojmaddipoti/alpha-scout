@@ -4,7 +4,8 @@ yfinance
 openai
 python-dotenv
 tavily-python
-google-generativeai
+google-genai
 edgartools
 lxml
 fpdf2
+watchdog
