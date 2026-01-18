@@ -1,7 +1,7 @@
 # Project Cleanup Summary
 
 ## Overview
-This document summarizes the cleanup and refactoring performed on the my-ai-agent project to make it interview-ready and production-quality.
+This document summarizes the cleanup and refactoring performed on the alpha-scout project to make it interview-ready and production-quality.
 
 ## Changes Made
 

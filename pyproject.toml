@@ -1,7 +1,7 @@
 [project]
-name = "my-ai-agent"
+name = "alpha-scout"
 version = "0.1.0"
-description = "Market Intelligence Agent"
+description = "AI-Powered Market Analysis Tool"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

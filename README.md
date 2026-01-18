@@ -1,4 +1,4 @@
-# Market Intelligence Agent
+# Alpha Scout
 
 A sophisticated AI-powered market analysis tool that provides deep financial insights and investment analysis using multiple AI models and real-time market data.
 
@@ -39,7 +39,7 @@ The agent applies a rigorous investment framework:
 1. Clone the repository:
 ```bash
 git clone <repository-url>
-cd my-ai-agent
+cd alpha-scout
 ```
 
 2. Create and activate a virtual environment:
@@ -69,8 +69,8 @@ streamlit run app.py
 Build and run using Docker:
 
 ```bash
-docker build -t market-intelligence .
-docker run -p 8501:8501 --env-file .env market-intelligence
+docker build -t alpha-scout .
+docker run -p 8501:8501 --env-file .env alpha-scout
 ```
 
 ## Configuration
@@ -102,7 +102,7 @@ APP_PASSWORD=your_app_password
 ## Project Structure
 
 ```
-my-ai-agent/
+alpha-scout/
 ├── app.py              # Main Streamlit application
 ├── search_agent.py     # AI agent logic and tool functions
 ├── database.py         # SQLite chat history management
