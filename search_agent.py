@@ -1,9 +1,11 @@
 import os
 import json
+import time
 import yfinance as yf
 from openai import OpenAI
 from tavily import TavilyClient
 from google import genai
+import anthropic
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -26,6 +28,12 @@ def get_gemini_client():
     if not api_key:
         raise ValueError("GOOGLE_API_KEY not found")
     return genai.Client(api_key=api_key)
+
+def get_claude_client():
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise ValueError("ANTHROPIC_API_KEY not found")
+    return anthropic.Anthropic(api_key=api_key)
 
 # System Prompt
 SYSTEM_PROMPT = """
@@ -123,10 +131,19 @@ def get_sec_filing(ticker: str):
 
 def get_financial_metrics(ticker: str):
     """Fetch comprehensive financial metrics including valuation, growth, and technical indicators."""
-    try:
-        stock = yf.Ticker(ticker)
-        info = stock.info
+    for attempt in range(3):
+        try:
+            stock = yf.Ticker(ticker)
+            info = stock.info
+            if info and "currentPrice" in info:
+                break
+            time.sleep(2 ** attempt)
+        except Exception:
+            if attempt == 2:
+                return json.dumps({"error": f"Rate limit or network error fetching data for {ticker}. Please retry."})
+            time.sleep(2 ** attempt)
 
+    try:
         if not info or "currentPrice" not in info:
             return json.dumps({"error": f"Invalid ticker: {ticker}"})
 
@@ -487,21 +504,113 @@ def run_gemini_logic(messages, model_name="gemini-2.0-flash-exp"):
     except Exception as e:
         return f"Gemini error: {str(e)}", []
 
-# Helper Functions
-def get_valid_gemini_models():
-    """Return available Gemini model options."""
-    return [
-        "gemini-2.0-flash-exp",
-        "gemini-1.5-pro",
-        "gemini-1.5-flash"
-    ]
+# Claude Agent Logic
+
+TOOLS_CLAUDE = [
+    {
+        "name": "web_search",
+        "description": "Search for news and analyst ratings.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"query": {"type": "string", "description": "Search query"}},
+            "required": ["query"]
+        }
+    },
+    {
+        "name": "get_financial_metrics",
+        "description": "Get price, PEG ratio, and growth metrics for a stock ticker.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"ticker": {"type": "string", "description": "Stock ticker symbol"}},
+            "required": ["ticker"]
+        }
+    },
+    {
+        "name": "get_sec_filing",
+        "description": "Get the latest SEC 10-K/10-Q/20-F filing text.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"ticker": {"type": "string", "description": "Stock ticker symbol"}},
+            "required": ["ticker"]
+        }
+    }
+]
+
+def run_claude_logic(messages, model_name="claude-opus-4-6"):
+    """Execute Claude tool-use logic using Anthropic SDK."""
+    try:
+        client = get_claude_client()
+
+        # Build conversation history (exclude system messages)
+        claude_messages = []
+        for msg in messages:
+            role = msg["role"]
+            content = msg["content"]
+            if role == "user":
+                claude_messages.append({"role": "user", "content": content})
+            elif role == "assistant" and content:
+                claude_messages.append({"role": "assistant", "content": content})
+
+        found_tickers = []
+
+        # Agentic tool-use loop
+        while True:
+            response = client.messages.create(
+                model=model_name,
+                max_tokens=4096,
+                system=SYSTEM_PROMPT,
+                tools=TOOLS_CLAUDE,
+                messages=claude_messages
+            )
+
+            # No tool calls — return final text
+            if response.stop_reason != "tool_use":
+                final_text = "".join(
+                    block.text for block in response.content if hasattr(block, "text")
+                )
+                return final_text, found_tickers
+
+            # Execute tool calls
+            claude_messages.append({"role": "assistant", "content": response.content})
+            tool_results = []
+
+            for block in response.content:
+                if block.type != "tool_use":
+                    continue
+
+                func_name = block.name
+                func_args = block.input
+                result = ""
+
+                if func_name == "web_search":
+                    result = web_search(func_args["query"])
+                elif func_name == "get_financial_metrics":
+                    ticker = func_args["ticker"]
+                    found_tickers.append(ticker)
+                    result = get_financial_metrics(ticker)
+                elif func_name == "get_sec_filing":
+                    result = get_sec_filing(func_args["ticker"])
+
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": result
+                })
+
+            claude_messages.append({"role": "user", "content": tool_results})
+
+    except Exception as e:
+        return f"Claude error: {str(e)}", []
+
 
 # Main Agent Router
-def run_smart_agent(messages, model_choice="gpt-4o"):
+def run_smart_agent(messages, model_choice="gemini-2.5-pro"):
     """Execute the appropriate AI agent based on model selection."""
     try:
-        if "gemini" in model_choice.lower() or "deep-research" in model_choice.lower():
+        if "gemini" in model_choice.lower():
             return run_gemini_logic(messages, model_choice)
+        elif "claude" in model_choice.lower():
+            return run_claude_logic(messages, model_choice)
         else:
             return run_openai_logic(messages)
     except Exception as e:

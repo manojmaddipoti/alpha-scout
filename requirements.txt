@@ -2,6 +2,7 @@ streamlit
 pandas
 yfinance
 openai
+anthropic
 python-dotenv
 tavily-python
 google-genai

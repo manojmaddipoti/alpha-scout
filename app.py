@@ -63,11 +63,11 @@ with st.sidebar:
     model_choice = st.selectbox(
         "AI Model",
         [
+            "gemini-2.5-pro",
             "gpt-4o",
-            "gemini-2.0-flash-exp",
-            "gemini-1.5-pro"
+            "claude-sonnet-4-6",
         ],
-        index=1
+        index=0
     )
 
     if st.button("New Chat", use_container_width=True, type="primary"):

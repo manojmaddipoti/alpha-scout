@@ -8,7 +8,7 @@ This application combines advanced AI models (GPT-4o, Google Gemini) with financ
 
 ## Key Features
 
-- **Multi-Model AI Support**: Leverage GPT-4o, Gemini-3-Pro, or Deep Research models
+- **Multi-Model AI Support**: Leverage Gemini 2.5 Pro (Google), GPT-4o (OpenAI), or Claude Sonnet 4.6 (Anthropic)
 - **Comprehensive Analysis Framework**: Evaluates stocks using the "Beat QQQ" strategy
 - **Real-Time Market Data**: Integration with Yahoo Finance for current pricing and historical trends
 - **SEC Filings Analysis**: Automated retrieval and analysis of 10-K/10-Q/20-F filings
@@ -78,6 +78,7 @@ docker run -p 8501:8501 --env-file .env alpha-scout
 Create a `.env` file with the following variables:
 
 ```env
+ANTHROPIC_API_KEY=your_anthropic_api_key
 OPENAI_API_KEY=your_openai_api_key
 GOOGLE_API_KEY=your_google_api_key
 TAVILY_API_KEY=your_tavily_api_key
@@ -115,7 +116,7 @@ alpha-scout/
 ## Technology Stack
 
 - **Frontend**: Streamlit
-- **AI Models**: OpenAI GPT-4o, Google Gemini 3.0, Deep Research
+- **AI Models**: Google Gemini 2.5 Pro, OpenAI GPT-4o, Anthropic Claude Sonnet 4.6
 - **Financial Data**: yfinance, SEC EDGAR tools
 - **Web Search**: Tavily API
 - **Database**: SQLite
