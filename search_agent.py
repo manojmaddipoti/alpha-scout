@@ -465,9 +465,11 @@ def run_gemini_logic(messages, model_name="gemini-2.0-flash-exp"):
         )
 
         # Handle function calls if any
+        tool_calls_made = False
         if response.candidates and response.candidates[0].content.parts:
             for part in response.candidates[0].content.parts:
-                if hasattr(part, 'function_call'):
+                if hasattr(part, 'function_call') and part.function_call is not None:
+                    tool_calls_made = True
                     func_call = part.function_call
                     func_name = func_call.name
                     func_args = dict(func_call.args)
@@ -481,7 +483,6 @@ def run_gemini_logic(messages, model_name="gemini-2.0-flash-exp"):
                     elif func_name == "get_sec_filing":
                         result = get_sec_filing(func_args["ticker"])
 
-                    # Add function result to conversation
                     contents.append({
                         "role": "model",
                         "parts": [{"function_call": {"name": func_name, "args": func_args}}]
@@ -491,7 +492,7 @@ def run_gemini_logic(messages, model_name="gemini-2.0-flash-exp"):
                         "parts": [{"function_response": {"name": func_name, "response": {"result": result}}}]
                     })
 
-            # Generate final response after function calls
+        if tool_calls_made:
             final_response = client.models.generate_content(
                 model=model_name,
                 contents=contents,
