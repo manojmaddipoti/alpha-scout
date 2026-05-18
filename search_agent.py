@@ -37,59 +37,49 @@ def get_claude_client():
 
 # System Prompt
 SYSTEM_PROMPT = """
-You are a High-Conviction Investment Analyst managing a "Barbell Strategy" portfolio.
-Your mandate is to beat the Nasdaq-100 (QQQ) by identifying Compounders (Alpha) and Momentum Satellites.
+You are an Elite Buy-Side Equities Analyst at a top-tier hedge fund. 
+Your mandate is to generate high-conviction, proprietary investment theses. You do not follow market consensus; you exploit it by identifying what the market is mispricing.
 
-When analyzing ANY stock, you must apply the following rigorous framework:
+You are evaluating a potential addition to a concentrated, high-performance portfolio. You must evaluate the company from first principles, acting as a forensic accountant and a ruthless business strategist. 
 
-### 1. 🏢 Business & Moat (The "Quality" Check)
-- **Business Model:** Summarize what they do.
-- **Thesis Check (Pivot):** Has there been "Thesis Drift"? Use `web_search` to validate.
-- **Moat:** Does it have high switching costs or Network Effects?
+When analyzing ANY stock, use your tools (`get_financial_metrics`, `get_sec_filing`, `web_search`) to execute the following deep-dive framework:
 
-### 2. 📊 The "Beat QQQ" Financial Screen
-*Evaluate the stock against these specific benchmarks using `get_financial_metrics`:*
-- **Hyper-Growth:** Is `revenue_growth_yoy` > 25%?
-- **Efficiency (Rule of 40):** Does `rule_of_40` score exceed 40?
-- **Sales Efficiency (Magic Number):** Check `magic_number`.
-  - **> 1.0:** Efficient (Invest more).
-  - **< 0.7:** **TRAP** (Buying growth inefficiently).
-- **Cash Flow Power:** Does OCF cover CapEx? Check if `capex_coverage_percent` > 80%.
-- **Shareholder Dilution:** Is `share_count_growth_yoy` < 5%?
-- **Margins:** Is `gross_margin` > 70% (Software) or > 50% (Marketplace)?
+### 1. 🏢 Business Reality & The Moat (No Buzzwords)
+- **The Economic Engine:** Explain exactly how this company extracts cash from its customers. Strip away the corporate jargon. What is the actual product/service?
+- **The Structural Moat:** Does this company have a genuine, unassailable moat, or just a temporary head start? Assess switching costs, network effects, cost advantages, or intangible assets.
+- **The Value Chain:** Where does this company sit in its industry's value chain? Who holds the power: them, their suppliers, or their customers?
 
-### 3. Bull & Bear Analysis
-- **Bull:** List 3 reasons why the stock is a good investment.
-- **Bear:** List 3 reasons why the stock is a bad investment.
-- **Competition:** List 3 key competitors and their growth rates.
-- **Valuation:** List 3 key valuation metrics and their targets.
+### 2. 🕵️ Forensic Accounting & Capital Allocation
+*Contextualize the numbers. Do not just list them; interpret what they mean for the business lifecycle.*
+- **Capital Efficiency:** Evaluate `return_on_invested_capital` (ROIC) and margins. Is management effectively compounding capital, or are they destroying it to buy growth?
+- **True Cash Generation:** Analyze Free Cash Flow relative to `stock_based_comp`. Is the cash flow real, or is it an illusion created by diluting shareholders?
+- **The Balance Sheet:** Evaluate debt, cash reserves, and `capex_coverage_percent`. Can they self-fund their operations and growth, or are they dependent on capital markets?
 
-### 4. 📉 Technicals & Momentum
-- **Trend:** Is `price_above_200dma` True?
-- **RSI:** Is `rsi_14_day` < 75?
+### 3. 📜 The SEC Tape (Filing Analysis)
+*You MUST use `get_sec_filing` to read the actual filings (10-K, 10-Q). Do not rely solely on press releases.*
+- **Management's Tone (MD&A):** What is management emphasizing in the Management's Discussion and Analysis? Are they hiding deterioration behind "adjusted" metrics?
+- **The Hidden Risks:** Identify the specific, material "Risk Factors" listed in the filings. Ignore boilerplate legal warnings; find the actual existential threats (e.g., customer concentration, severe supply chain chokepoints, pending regulatory doom).
 
-### 5. 📜 Official Risks
-- **SEC Check:** Use `get_sec_filing` for "Risk Factors".
-- **Competition:** Name 2 key rivals.
+### 4. 🧠 The Variant Perception (The Hedge Fund Edge)
+- **Consensus vs. Reality:** What is the current Wall Street consensus pricing into this stock? (e.g., perpetual hyper-growth? imminent bankruptcy?)
+- **Your Variant Perception:** Why is the market wrong? What hidden catalyst, structural shift, or misunderstood metric proves the current valuation is incorrect?
 
-### 6. 🏛️ Final Verdict (The Scorecard)
-Present a "Beat QQQ Scorecard" and a definitive action.
-**CRITICAL SELL RULES:** You must rate as **SELL** if ANY of the following are true:
-1. **Inefficient Growth:** `magic_number` is < 0.7 (The "Growth Trap").
-2. **Cash Burn:** `capex_coverage_percent` is < 80% (unless <2yr post-IPO).
-3. **Dilution Spiral:** `share_count_growth_yoy` is > 5%.
-4. **Fails Rule of 40** AND Revenue Growth is slowing.
+### 5. ⚖️ Asymmetric Risk/Reward Assessment
+- **The Bull Case (Upside Convexity):** If your variant perception is correct, how does the business scale? What is the specific catalyst that forces the market to re-price the stock higher?
+- **The Bear Case (Margin of Safety):** If you are wrong, how much capital is permanently destroyed? What is the fundamental floor for this stock?
 
-Otherwise:
-- **STRONG BUY:** Growth > 25%, Rule of 40, Magic Number > 1.0, and PEG < 2.0.
-- **HOLD:** Good company but expensive or mixed metrics.
+### 6. 🏛️ The Portfolio Manager's Verdict
+Present a definitive, cutthroat investment conclusion.
+- State clearly if the stock is a **STRONG BUY**, **HOLD**, or **AVOID/SHORT**.
+- Justify the verdict based entirely on the alignment of its intrinsic business quality, its capital allocation track record, and the current mispricing in the market. Do not let a great company distract you if it is priced for an impossible perfection. Do not let a temporary ugly quarter scare you away from a structural monopoly.
 """
 
 # Tool Functions
 
 def get_sec_filing(ticker: str):
-    """Fetch latest SEC filing (10-K/10-Q/20-F/6-K) for a given ticker."""
+    """Fetch latest 10-K/10-Q and surgically extract Item 7 (MD&A) and Item 1A (Risk Factors)."""
     try:
+        import re
         from edgar import Company, set_identity
 
         sec_identity = os.getenv("SEC_IDENTITY", "Agent user@example.com")
@@ -97,33 +87,70 @@ def get_sec_filing(ticker: str):
 
         company = Company(ticker)
 
-        filings = company.get_filings(form=["10-K", "20-F"])
-        latest_annual = filings.latest() if filings else None
+        annual = company.get_filings(form=["10-K", "20-F"])
+        latest_annual = annual.latest() if annual else None
 
-        quarterly_filings = company.get_filings(form=["10-Q", "6-K"])
-        latest_update = quarterly_filings.latest() if quarterly_filings else None
+        quarterly = company.get_filings(form=["10-Q", "6-K"])
+        latest_quarter = quarterly.latest() if quarterly else None
 
-        doc_text = ""
-        source_used = "None"
-
-        if latest_update and latest_annual:
-            if latest_update.filing_date > latest_annual.filing_date:
-                doc_text = latest_update.text()
-                source_used = f"{latest_update.form} ({latest_update.filing_date})"
-            else:
-                doc_text = latest_annual.text()
-                source_used = f"{latest_annual.form} ({latest_annual.filing_date})"
-        elif latest_annual:
-            doc_text = latest_annual.text()
-            source_used = f"{latest_annual.form} ({latest_annual.filing_date})"
-        elif latest_update:
-            doc_text = latest_update.text()
-            source_used = f"{latest_update.form} ({latest_update.filing_date})"
-
-        if not doc_text:
+        # Prefer 10-K — MD&A and Risk Factors are far more comprehensive in annual reports.
+        filing = latest_annual or latest_quarter
+        if not filing:
             return f"No recent SEC filings found for {ticker}."
 
-        return f"**Source:** {source_used}\n\n**Filing Text:**\n{doc_text[:25000]}..."
+        source_used = f"{filing.form} ({filing.filing_date})"
+        mda_text = ""
+        risk_text = ""
+
+        # Try edgartools' structured accessors first — they vary by version.
+        try:
+            filing_obj = filing.obj()
+            for attr in ("management_discussion", "mda", "item_7"):
+                if hasattr(filing_obj, attr):
+                    val = getattr(filing_obj, attr)
+                    if val:
+                        mda_text = str(val)
+                        break
+            for attr in ("risk_factors", "item_1a"):
+                if hasattr(filing_obj, attr):
+                    val = getattr(filing_obj, attr)
+                    if val:
+                        risk_text = str(val)
+                        break
+        except Exception:
+            pass
+
+        # Fallback: regex extraction from full filing text.
+        if not mda_text or not risk_text:
+            full_text = filing.text()
+
+            if not risk_text:
+                m = re.search(
+                    r"Item\s*1A\.?\s*Risk\s*Factors(.{500,80000}?)(?=Item\s*1B|Item\s*2\.?\s*Properties)",
+                    full_text, re.IGNORECASE | re.DOTALL
+                )
+                if m:
+                    risk_text = m.group(1).strip()
+
+            if not mda_text:
+                m = re.search(
+                    r"Item\s*7\.?\s*Management.{0,80}Discussion(.{500,80000}?)(?=Item\s*7A|Item\s*8\.?\s*Financial)",
+                    full_text, re.IGNORECASE | re.DOTALL
+                )
+                if m:
+                    mda_text = m.group(1).strip()
+
+        parts = [f"**Source:** {source_used}"]
+        if mda_text:
+            parts.append(f"\n**Item 7 — Management's Discussion & Analysis (MD&A):**\n{mda_text[:12000]}")
+        else:
+            parts.append("\n**Item 7 (MD&A):** Could not extract — section heading not found.")
+        if risk_text:
+            parts.append(f"\n**Item 1A — Risk Factors:**\n{risk_text[:12000]}")
+        else:
+            parts.append("\n**Item 1A (Risk Factors):** Could not extract — section heading not found.")
+
+        return "\n".join(parts)
 
     except Exception as e:
         return f"Error fetching SEC filings for {ticker}: {str(e)}"
@@ -167,6 +194,8 @@ def get_financial_metrics(ticker: str):
         share_count_growth = "N/A"
         sbc_percent = "N/A"
         magic_number = "N/A"
+        ocf_val = 0
+        sbc_val = 0
 
         try:
             # SaaS Magic Number
@@ -195,7 +224,6 @@ def get_financial_metrics(ticker: str):
                         revenue_cagr_3yr = round(((curr / past) ** (1/3) - 1) * 100, 2)
 
             # OCF & CapEx Coverage
-            ocf_val = 0
             capex_val = 0
             
             if not cashflow.empty:
@@ -235,12 +263,18 @@ def get_financial_metrics(ticker: str):
             # SBC %
             if not cashflow.empty:
                 sbc_row = next((idx for idx in cashflow.index if "Stock" in str(idx) and "Compensation" in str(idx)), None)
-                if sbc_row and info.get("totalRevenue"):
+                if sbc_row:
                     sbc_val = cashflow.loc[sbc_row].iloc[0]
-                    sbc_percent = round((sbc_val / info.get("totalRevenue")) * 100, 2)
+                    if info.get("totalRevenue"):
+                        sbc_percent = round((sbc_val / info.get("totalRevenue")) * 100, 2)
 
         except Exception:
             pass
+
+        # Cash quality: is SBC eating most of OCF? (forensic — shareholder value transfer)
+        sbc_to_ocf = "N/A"
+        if sbc_val and ocf_val and ocf_val > 0:
+            sbc_to_ocf = round((sbc_val / ocf_val) * 100, 2)
 
         # Technicals & Rule of 40
         history = stock.history(period="1y")
@@ -275,12 +309,15 @@ def get_financial_metrics(ticker: str):
             "market_cap": info.get("marketCap"),
             "forward_pe": fwd_pe,
             "peg_ratio": peg,
+            "return_on_invested_capital": round(info.get("returnOnEquity", 0) * 100, 2) if info.get("returnOnEquity") else "N/A",
+            "operating_cash_flow": ocf_val if ocf_val else "N/A",
             "magic_number": magic_number,
             "revenue_growth_yoy": round(rev_growth * 100, 2) if rev_growth else "N/A",
             "revenue_cagr_3yr": revenue_cagr_3yr,
             "capex_coverage_percent": capex_coverage,
             "share_count_growth_yoy": share_count_growth,
             "sbc_percent_revenue": sbc_percent,
+            "sbc_to_ocf_percent": sbc_to_ocf,
             "rule_of_40": rule_of_40,
             "price_above_200dma": price_above_200dma,
             "rsi_14_day": rsi_14,
@@ -310,7 +347,7 @@ TOOLS_OPENAI = [
         "type": "function",
         "function": {
             "name": "web_search",
-            "description": "Search for news and analyst ratings.",
+            "description": "Search the web for current news, analyst consensus, and market sentiment. Use this to identify variant perception — where the Street consensus may be mispricing the stock.",
             "parameters": {
                 "type": "object",
                 "properties": {"query": {"type": "string"}},
@@ -322,7 +359,7 @@ TOOLS_OPENAI = [
         "type": "function",
         "function": {
             "name": "get_financial_metrics",
-            "description": "Get price, PEG ratio, and growth metrics.",
+            "description": "Fetch forensic accounting and capital efficiency metrics for a ticker: ROIC, operating cash flow, stock-based compensation as % of OCF (cash quality), share dilution YoY, capex coverage, net debt, and valuation ratios. Use this to assess whether reported earnings represent real cash generation or accounting illusion.",
             "parameters": {
                 "type": "object",
                 "properties": {"ticker": {"type": "string"}},
@@ -334,7 +371,7 @@ TOOLS_OPENAI = [
         "type": "function",
         "function": {
             "name": "get_sec_filing",
-            "description": "Get the latest SEC 10-K/10-Q/20-F filing text.",
+            "description": "Retrieve the targeted Item 7 (MD&A) and Item 1A (Risk Factors) sections from the latest 10-K/20-F. Use this to read management's framing in their own words and identify the material existential risks they are legally required to disclose.",
             "parameters": {
                 "type": "object",
                 "properties": {"ticker": {"type": "string"}},
@@ -418,7 +455,7 @@ def run_gemini_logic(messages, model_name="gemini-2.0-flash-exp"):
                 "function_declarations": [
                     {
                         "name": "web_search",
-                        "description": "Search for news and analyst ratings.",
+                        "description": "Search the web for current news, analyst consensus, and market sentiment. Use this to identify variant perception — where the Street consensus may be mispricing the stock.",
                         "parameters": {
                             "type": "object",
                             "properties": {
@@ -429,7 +466,7 @@ def run_gemini_logic(messages, model_name="gemini-2.0-flash-exp"):
                     },
                     {
                         "name": "get_financial_metrics",
-                        "description": "Get price, PEG ratio, and growth metrics for a stock ticker.",
+                        "description": "Fetch forensic accounting and capital efficiency metrics for a ticker: ROIC, operating cash flow, stock-based compensation as % of OCF (cash quality), share dilution YoY, capex coverage, net debt, and valuation ratios. Use this to assess whether reported earnings represent real cash generation or accounting illusion.",
                         "parameters": {
                             "type": "object",
                             "properties": {
@@ -440,7 +477,7 @@ def run_gemini_logic(messages, model_name="gemini-2.0-flash-exp"):
                     },
                     {
                         "name": "get_sec_filing",
-                        "description": "Get the latest SEC 10-K/10-Q/20-F filing text.",
+                        "description": "Retrieve the targeted Item 7 (MD&A) and Item 1A (Risk Factors) sections from the latest 10-K/20-F. Use this to read management's framing in their own words and identify the material existential risks they are legally required to disclose.",
                         "parameters": {
                             "type": "object",
                             "properties": {
@@ -510,7 +547,7 @@ def run_gemini_logic(messages, model_name="gemini-2.0-flash-exp"):
 TOOLS_CLAUDE = [
     {
         "name": "web_search",
-        "description": "Search for news and analyst ratings.",
+        "description": "Search the web for current news, analyst consensus, and market sentiment. Use this to identify variant perception — where the Street consensus may be mispricing the stock.",
         "input_schema": {
             "type": "object",
             "properties": {"query": {"type": "string", "description": "Search query"}},
@@ -519,7 +556,7 @@ TOOLS_CLAUDE = [
     },
     {
         "name": "get_financial_metrics",
-        "description": "Get price, PEG ratio, and growth metrics for a stock ticker.",
+        "description": "Fetch forensic accounting and capital efficiency metrics for a ticker: ROIC, operating cash flow, stock-based compensation as % of OCF (cash quality), share dilution YoY, capex coverage, net debt, and valuation ratios. Use this to assess whether reported earnings represent real cash generation or accounting illusion.",
         "input_schema": {
             "type": "object",
             "properties": {"ticker": {"type": "string", "description": "Stock ticker symbol"}},
@@ -528,7 +565,7 @@ TOOLS_CLAUDE = [
     },
     {
         "name": "get_sec_filing",
-        "description": "Get the latest SEC 10-K/10-Q/20-F filing text.",
+        "description": "Retrieve the targeted Item 7 (MD&A) and Item 1A (Risk Factors) sections from the latest 10-K/20-F. Use this to read management's framing in their own words and identify the material existential risks they are legally required to disclose.",
         "input_schema": {
             "type": "object",
             "properties": {"ticker": {"type": "string", "description": "Stock ticker symbol"}},
