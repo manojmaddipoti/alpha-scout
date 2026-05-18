@@ -425,7 +425,7 @@ def run_openai_logic(messages):
     try:
         client = get_openai_client()
         response = client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-5",
             messages=messages,
             tools=TOOLS_OPENAI
         )
@@ -457,7 +457,7 @@ def run_openai_logic(messages):
                 })
 
             final_response = client.chat.completions.create(
-                model="gpt-4o",
+                model="gpt-5",
                 messages=messages
             )
             return final_response.choices[0].message.content, found_tickers
@@ -469,7 +469,7 @@ def run_openai_logic(messages):
 
 # Gemini Agent Logic
 
-def run_gemini_logic(messages, model_name="gemini-2.0-flash-exp"):
+def run_gemini_logic(messages, model_name="gemini-3.1-pro"):
     """Execute Gemini function calling logic using new google.genai package."""
     try:
         client = get_gemini_client()
@@ -613,7 +613,7 @@ TOOLS_CLAUDE = [
     }
 ]
 
-def run_claude_logic(messages, model_name="claude-opus-4-6"):
+def run_claude_logic(messages, model_name="claude-opus-4-7"):
     """Execute Claude tool-use logic using Anthropic SDK."""
     try:
         client = get_claude_client()
@@ -681,7 +681,7 @@ def run_claude_logic(messages, model_name="claude-opus-4-6"):
 
 
 # Main Agent Router
-def run_smart_agent(messages, model_choice="gemini-2.5-pro"):
+def run_smart_agent(messages, model_choice="claude-opus-4-7"):
     """Execute the appropriate AI agent based on model selection."""
     try:
         if "gemini" in model_choice.lower():

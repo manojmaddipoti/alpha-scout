@@ -63,9 +63,9 @@ with st.sidebar:
     model_choice = st.selectbox(
         "AI Model",
         [
-            "gemini-2.5-pro",
-            "gpt-4o",
-            "claude-sonnet-4-6",
+            "claude-opus-4-7",
+            "gpt-5",
+            "gemini-3.1-pro",
         ],
         index=0
     )
