@@ -630,13 +630,26 @@ def run_claude_logic(messages, model_name="claude-opus-4-7"):
 
         found_tickers = []
 
+        # Cache the system prompt and tools schema — both are static across the
+        # tool-use loop, so caching them cuts input cost ~90% on iterations 2+.
+        cached_system = [
+            {
+                "type": "text",
+                "text": SYSTEM_PROMPT,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ]
+        # Adding cache_control to the last tool caches the entire tools block.
+        cached_tools = [dict(t) for t in TOOLS_CLAUDE]
+        cached_tools[-1] = {**cached_tools[-1], "cache_control": {"type": "ephemeral"}}
+
         # Agentic tool-use loop
         while True:
             response = client.messages.create(
                 model=model_name,
                 max_tokens=4096,
-                system=SYSTEM_PROMPT,
-                tools=TOOLS_CLAUDE,
+                system=cached_system,
+                tools=cached_tools,
                 messages=claude_messages
             )
 

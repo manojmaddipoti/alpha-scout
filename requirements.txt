@@ -8,5 +8,6 @@ tavily-python
 google-genai
 edgartools
 lxml
-fpdf2
+weasyprint
+markdown
 watchdog

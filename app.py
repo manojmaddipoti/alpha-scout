@@ -3,7 +3,9 @@ import os
 import time
 import streamlit as st
 import yfinance as yf
-from fpdf import FPDF
+import markdown as md_lib
+from weasyprint import HTML, CSS
+from datetime import datetime
 from search_agent import run_smart_agent, SYSTEM_PROMPT
 import database as db
 
@@ -122,14 +124,112 @@ def get_stock_history(ticker):
     except Exception:
         return None
 
+PDF_CSS = """
+@page {
+    size: Letter;
+    margin: 0.75in 0.75in 1in 0.75in;
+    @bottom-center {
+        content: "Alpha Scout — Confidential Research  |  Page " counter(page) " of " counter(pages);
+        font-family: 'Helvetica Neue', Arial, sans-serif;
+        font-size: 9pt;
+        color: #888;
+    }
+}
+body {
+    font-family: 'Georgia', 'Times New Roman', serif;
+    font-size: 10.5pt;
+    line-height: 1.55;
+    color: #1a1a1a;
+}
+.cover {
+    border-bottom: 2px solid #0a3d62;
+    padding-bottom: 12px;
+    margin-bottom: 24px;
+}
+.cover h1 {
+    color: #0a3d62;
+    font-size: 22pt;
+    margin: 0;
+    letter-spacing: -0.5px;
+}
+.cover .meta {
+    color: #555;
+    font-size: 9.5pt;
+    margin-top: 6px;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+}
+h1, h2, h3 {
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    color: #0a3d62;
+    page-break-after: avoid;
+}
+h1 { font-size: 16pt; border-bottom: 1px solid #ccc; padding-bottom: 4px; margin-top: 22px; }
+h2 { font-size: 13pt; margin-top: 18px; }
+h3 { font-size: 11.5pt; margin-top: 14px; color: #1f5582; }
+p { margin: 8px 0; }
+strong { color: #0a3d62; }
+ul, ol { margin: 8px 0; padding-left: 22px; }
+li { margin: 3px 0; }
+table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 12px 0;
+    font-size: 9.5pt;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+}
+th {
+    background: #0a3d62;
+    color: white;
+    padding: 6px 10px;
+    text-align: left;
+    border: 1px solid #0a3d62;
+}
+td {
+    padding: 6px 10px;
+    border: 1px solid #ddd;
+}
+tr:nth-child(even) td { background: #f7f9fb; }
+code {
+    font-family: 'SF Mono', Monaco, Consolas, monospace;
+    font-size: 9pt;
+    background: #f4f4f4;
+    padding: 1px 4px;
+    border-radius: 3px;
+}
+pre {
+    background: #f7f9fb;
+    border-left: 3px solid #0a3d62;
+    padding: 10px 14px;
+    font-family: 'SF Mono', Monaco, Consolas, monospace;
+    font-size: 9pt;
+    overflow-x: auto;
+}
+blockquote {
+    border-left: 3px solid #0a3d62;
+    margin: 12px 0;
+    padding: 6px 14px;
+    color: #444;
+    font-style: italic;
+    background: #f9fafc;
+}
+"""
+
 def create_pdf(text):
     try:
-        pdf = FPDF()
-        pdf.add_page()
-        pdf.set_font("Arial", size=12)
-        clean_text = text.replace("**", "").replace("##", "").replace("###", "")
-        pdf.multi_cell(0, 10, clean_text.encode('latin-1', 'replace').decode('latin-1'))
-        return bytes(pdf.output())
+        html_body = md_lib.markdown(
+            text,
+            extensions=["tables", "fenced_code", "nl2br", "sane_lists"],
+        )
+        date_str = datetime.now().strftime("%B %d, %Y")
+        full_html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"></head><body>
+  <div class="cover">
+    <h1>Alpha Scout — Equity Research Memo</h1>
+    <div class="meta">Generated {date_str} &nbsp;·&nbsp; Confidential &nbsp;·&nbsp; Not investment advice</div>
+  </div>
+  {html_body}
+</body></html>"""
+        return HTML(string=full_html).write_pdf(stylesheets=[CSS(string=PDF_CSS)])
     except Exception:
         return None
 
