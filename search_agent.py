@@ -61,8 +61,11 @@ When analyzing ANY stock, use your tools (`get_financial_metrics`, `get_sec_fili
 - **The Hidden Risks:** Identify the specific, material "Risk Factors" listed in the filings. Ignore boilerplate legal warnings; find the actual existential threats (e.g., customer concentration, severe supply chain chokepoints, pending regulatory doom).
 
 ### 4. 🧠 The Variant Perception (The Hedge Fund Edge)
-- **Consensus vs. Reality:** What is the current Wall Street consensus pricing into this stock? (e.g., perpetual hyper-growth? imminent bankruptcy?)
-- **Your Variant Perception:** Why is the market wrong? What hidden catalyst, structural shift, or misunderstood metric proves the current valuation is incorrect?
+*This section is now data-driven. Do not guess what consensus thinks — read it from the metrics.*
+- **The Consensus, Quantified:** Pull `analyst_consensus`, `analyst_target_mean`, and `upside_to_target_percent` from `get_financial_metrics`. The Street's view is no longer abstract — it is a specific price and recommendation.
+- **Smart Money Signal:** Check `insider_net_shares_6mo`. Insiders buying their own stock with personal cash is one of the highest-signal alpha factors in equities. Heavy net buying contradicting a bearish consensus = high-conviction variant setup. Heavy net selling alongside a bullish consensus = warning.
+- **Crowded Trade Check:** Read `short_percent_of_float` and `short_ratio_days_to_cover`. >10% short with low days-to-cover = squeeze potential if your bull thesis is right. >5% short with high days-to-cover = crowded short, harder to compress. Low short interest on a bear thesis = your idea is not contrarian.
+- **Your Variant Perception:** Given consensus is *X* and the data shows *Y*, where exactly is the market wrong? What hidden catalyst, structural shift, or misread metric proves the current valuation is incorrect?
 
 ### 5. ⚖️ Asymmetric Risk/Reward Assessment
 - **The Bull Case (Upside Convexity):** If your variant perception is correct, how does the business scale? What is the specific catalyst that forces the market to re-price the stock higher?
@@ -302,6 +305,33 @@ def get_financial_metrics(ticker: str):
         if rev_growth is not None:
             rule_of_40 = round((rev_growth * 100) + (fcf_margin * 100), 2)
 
+        # Alpha Signal Block — insider buying, consensus, short interest
+
+        # Insider activity: positive = net buying (executives accumulating with personal cash)
+        insider_net_shares_6mo = "N/A"
+        try:
+            ins = stock.insider_purchases
+            if ins is not None and not ins.empty:
+                label_col = ins.columns[0]
+                net_row = ins[ins[label_col].astype(str).str.contains("Net", case=False, na=False)]
+                if not net_row.empty and len(ins.columns) > 1:
+                    val = net_row.iloc[0, 1]
+                    if val is not None and str(val).strip() not in ("", "nan"):
+                        insider_net_shares_6mo = int(val)
+        except Exception:
+            pass
+
+        # Analyst consensus — needed for variant perception (where is the Street wrong?)
+        target_mean = info.get("targetMeanPrice")
+        current_price = info.get("currentPrice")
+        upside_to_target = "N/A"
+        if target_mean and current_price:
+            upside_to_target = round(((target_mean / current_price) - 1) * 100, 2)
+
+        # Short interest — contrarian / squeeze signal
+        short_pct = info.get("shortPercentOfFloat")
+        short_pct_float = round(short_pct * 100, 2) if short_pct else "N/A"
+
         # Compile Results
         data = {
             "ticker": ticker.upper(),
@@ -323,6 +353,15 @@ def get_financial_metrics(ticker: str):
             "rsi_14_day": rsi_14,
             "gross_margin": round(info.get("grossMargins", 0) * 100, 2) if info.get("grossMargins") else "N/A",
             "net_cash": (info.get("totalCash", 0) or 0) - (info.get("totalDebt", 0) or 0),
+            "insider_net_shares_6mo": insider_net_shares_6mo,
+            "analyst_consensus": info.get("recommendationKey", "N/A"),
+            "analyst_count": info.get("numberOfAnalystOpinions", "N/A"),
+            "analyst_target_mean": target_mean if target_mean else "N/A",
+            "analyst_target_high": info.get("targetHighPrice", "N/A"),
+            "analyst_target_low": info.get("targetLowPrice", "N/A"),
+            "upside_to_target_percent": upside_to_target,
+            "short_percent_of_float": short_pct_float,
+            "short_ratio_days_to_cover": info.get("shortRatio", "N/A"),
             "business_summary": info.get("longBusinessSummary", "N/A")
         }
 
@@ -359,7 +398,7 @@ TOOLS_OPENAI = [
         "type": "function",
         "function": {
             "name": "get_financial_metrics",
-            "description": "Fetch forensic accounting and capital efficiency metrics for a ticker: ROIC, operating cash flow, stock-based compensation as % of OCF (cash quality), share dilution YoY, capex coverage, net debt, and valuation ratios. Use this to assess whether reported earnings represent real cash generation or accounting illusion.",
+            "description": "Fetch forensic + alpha-signal metrics for a ticker. Includes: forensic accounting (ROIC, operating cash flow, SBC as % of OCF, dilution, capex coverage, net debt, valuation ratios); insider buying (net shares purchased by executives — strong-conviction alpha factor); analyst consensus (recommendation key, mean/high/low price targets, implied upside %); short interest (% of float, days-to-cover). Use this for capital quality, smart-money positioning, and the consensus-vs-reality math required for variant perception.",
             "parameters": {
                 "type": "object",
                 "properties": {"ticker": {"type": "string"}},
@@ -466,7 +505,7 @@ def run_gemini_logic(messages, model_name="gemini-2.0-flash-exp"):
                     },
                     {
                         "name": "get_financial_metrics",
-                        "description": "Fetch forensic accounting and capital efficiency metrics for a ticker: ROIC, operating cash flow, stock-based compensation as % of OCF (cash quality), share dilution YoY, capex coverage, net debt, and valuation ratios. Use this to assess whether reported earnings represent real cash generation or accounting illusion.",
+                        "description": "Fetch forensic + alpha-signal metrics for a ticker. Includes: forensic accounting (ROIC, operating cash flow, SBC as % of OCF, dilution, capex coverage, net debt, valuation ratios); insider buying (net shares purchased by executives — strong-conviction alpha factor); analyst consensus (recommendation key, mean/high/low price targets, implied upside %); short interest (% of float, days-to-cover). Use this for capital quality, smart-money positioning, and the consensus-vs-reality math required for variant perception.",
                         "parameters": {
                             "type": "object",
                             "properties": {
@@ -556,7 +595,7 @@ TOOLS_CLAUDE = [
     },
     {
         "name": "get_financial_metrics",
-        "description": "Fetch forensic accounting and capital efficiency metrics for a ticker: ROIC, operating cash flow, stock-based compensation as % of OCF (cash quality), share dilution YoY, capex coverage, net debt, and valuation ratios. Use this to assess whether reported earnings represent real cash generation or accounting illusion.",
+        "description": "Fetch forensic + alpha-signal metrics for a ticker. Includes: forensic accounting (ROIC, operating cash flow, SBC as % of OCF, dilution, capex coverage, net debt, valuation ratios); insider buying (net shares purchased by executives — strong-conviction alpha factor); analyst consensus (recommendation key, mean/high/low price targets, implied upside %); short interest (% of float, days-to-cover). Use this for capital quality, smart-money positioning, and the consensus-vs-reality math required for variant perception.",
         "input_schema": {
             "type": "object",
             "properties": {"ticker": {"type": "string", "description": "Stock ticker symbol"}},

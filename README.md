@@ -19,13 +19,14 @@ This application combines advanced AI models (GPT-4o, Google Gemini) with financ
 
 ## Analysis Methodology
 
-The agent applies a rigorous investment framework:
+The agent operates as a forensic buy-side analyst, applying a first-principles investment framework:
 
-1. **Business Quality Assessment**: Moat analysis, business model evaluation
-2. **Financial Screening**: Growth rates, profitability, cash flow metrics
-3. **Technical Analysis**: Trend identification, momentum indicators
-4. **Risk Evaluation**: SEC filing risk factors, competitive analysis
-5. **Investment Verdict**: Clear buy/hold/sell recommendations with reasoning
+1. **Business Reality & Value Chain**: Deconstructs the actual economic engine and structural moats.
+2. **Forensic Accounting**: Evaluates true ROIC, operating cash flow, stock-based compensation as a percentage of OCF (cash quality), shareholder dilution, and capital allocation efficiency rather than relying on manipulated "adjusted" earnings.
+3. **SEC Filing Teardown**: Surgically extracts Item 7 (MD&A) and Item 1A (Risk Factors) from the latest 10-K, exposing management's framing and material risks.
+4. **Smart Money & Consensus Delta**: Quantifies the variant perception edge by reading insider net buying, analyst price-target upside, recommendation skew, and short-interest crowding — the data-driven version of "where is the Street wrong?"
+5. **Variant Perception Generation**: Synthesizes consensus and smart-money signals against fundamental reality to find asymmetric, alpha-generating setups.
+6. **Investment Verdict**: Delivers cutthroat, high-conviction portfolio recommendations based on risk/reward profiles.
 
 ## Installation
 
