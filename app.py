@@ -1,5 +1,3 @@
-import sys
-import os
 import time
 import streamlit as st
 import yfinance as yf
@@ -7,6 +5,8 @@ import markdown as md_lib
 from weasyprint import HTML, CSS
 from datetime import datetime
 from search_agent import run_smart_agent, SYSTEM_PROMPT
+from config import Config
+from model_config import MODEL_CHOICES
 import database as db
 
 # Configuration
@@ -22,7 +22,11 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Authentication
-SECRET_PASSWORD = os.getenv("APP_PASSWORD", "Laxmi@2026")
+SECRET_PASSWORD = Config.APP_PASSWORD
+
+if not SECRET_PASSWORD:
+    st.error("APP_PASSWORD is not configured. Set it in your local .env file or deployment secrets.")
+    st.stop()
 
 def check_password():
     if "password_correct" not in st.session_state:
@@ -64,11 +68,7 @@ with st.sidebar:
 
     model_choice = st.selectbox(
         "AI Model",
-        [
-            "claude-opus-4-7",
-            "gpt-5",
-            "gemini-3.1-pro",
-        ],
+        MODEL_CHOICES,
         index=0
     )
 
@@ -240,6 +240,13 @@ for i, message in enumerate(st.session_state.messages):
             st.markdown(message["content"])
 
             if message["role"] == "assistant":
+                st.download_button(
+                    label="Download Markdown",
+                    data=message["content"],
+                    file_name=f"report_{i}.md",
+                    mime="text/markdown",
+                    key=f"md_{i}"
+                )
                 pdf_data = create_pdf(message["content"])
                 if pdf_data:
                     st.download_button(
@@ -283,6 +290,14 @@ if prompt := st.chat_input("Ask about a stock (e.g., 'Analyze NVDA')"):
                             st.line_chart(data, color="#00FF00")
 
                 st.markdown(response_text)
+
+                st.download_button(
+                    label="Download Markdown",
+                    data=response_text,
+                    file_name="analysis_report.md",
+                    mime="text/markdown",
+                    key="md_latest"
+                )
 
                 pdf_data = create_pdf(response_text)
                 if pdf_data:
