@@ -10,7 +10,7 @@ from openai import OpenAI
 from tavily import TavilyClient
 
 from metrics import get_competitor_metrics_json, get_equity_metrics_json
-from model_config import CLAUDE_MODEL, GEMINI_MODEL, OPENAI_MODEL
+from model_config import CLAUDE_MODEL, GEMINI_MODEL, OPENAI_MODEL, provider_for_model
 
 load_dotenv()
 
@@ -154,16 +154,20 @@ def _dispatch_tool(name: str, args: dict, found_tickers: list[str]) -> str:
     if name == "web_search":
         return web_search(args["query"])
     if name == "get_financial_metrics":
-        ticker = args["ticker"].upper()
+        ticker = args["ticker"].strip().upper()
         found_tickers.append(ticker)
         return get_financial_metrics(ticker)
     if name == "get_competitor_metrics":
-        target = args["target_ticker"].upper()
-        competitors = [ticker.upper() for ticker in args.get("competitors", [])]
+        target = args["target_ticker"].strip().upper()
+        competitors = [
+            ticker.strip().upper()
+            for ticker in args.get("competitors", [])
+            if ticker.strip()
+        ]
         found_tickers.extend([target, *competitors])
         return get_competitor_metrics(target, competitors)
     if name == "get_sec_filing":
-        ticker = args["ticker"].upper()
+        ticker = args["ticker"].strip().upper()
         found_tickers.append(ticker)
         return get_sec_filing(ticker)
     return f"Unknown tool: {name}"
@@ -395,9 +399,10 @@ def run_claude_logic(messages, model_name=CLAUDE_MODEL):
 def run_smart_agent(messages, model_choice=CLAUDE_MODEL):
     """Execute the selected AI analyst."""
     try:
-        if "gemini" in model_choice.lower():
+        provider = provider_for_model(model_choice)
+        if provider == "gemini":
             return run_gemini_logic(messages, model_choice)
-        if "claude" in model_choice.lower():
+        if provider == "claude":
             return run_claude_logic(messages, model_choice)
         return run_openai_logic(messages, model_choice)
     except Exception as exc:

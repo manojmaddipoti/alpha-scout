@@ -22,31 +22,31 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Authentication
-SECRET_PASSWORD = Config.APP_PASSWORD
-
-if not SECRET_PASSWORD:
-    st.error("APP_PASSWORD is not configured. Set it in your local .env file or deployment secrets.")
+try:
+    is_logged_in = st.user.is_logged_in
+except AttributeError:
+    st.error(
+        "OIDC authentication is not configured. Add an [auth] section to "
+        ".streamlit/secrets.toml or the deployment secrets."
+    )
     st.stop()
 
-def check_password():
-    if "password_correct" not in st.session_state:
-        st.session_state.password_correct = False
-    if st.session_state.password_correct:
-        return True
+if not is_logged_in:
+    st.title("Alpha Scout")
+    st.caption("Sign in with the configured identity provider to continue.")
+    st.button("Log in", on_click=st.login, type="primary")
+    st.stop()
 
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        st.title("🔒 Login")
-        pwd = st.text_input("Access Code", type="password")
-        if st.button("Enter"):
-            if pwd == SECRET_PASSWORD:
-                st.session_state.password_correct = True
-                st.rerun()
-            else:
-                st.error("Incorrect password.")
-    return False
-
-if not check_password():
+user_claims = st.user.to_dict()
+user_id = user_claims.get("sub") or user_claims.get("email")
+user_email = str(user_claims.get("email", "")).lower()
+if not user_id:
+    st.error("The identity provider did not return a stable user identifier.")
+    st.button("Log out", on_click=st.logout)
+    st.stop()
+if Config.ALLOWED_EMAILS and user_email not in Config.ALLOWED_EMAILS:
+    st.error("Your account is authenticated but is not authorized for this app.")
+    st.button("Log out", on_click=st.logout)
     st.stop()
 
 # Session and Database Initialization
@@ -65,6 +65,8 @@ if "current_session_id" not in st.session_state:
 # Sidebar Navigation
 with st.sidebar:
     st.title("Market Intelligence Agent")
+    st.caption(user_claims.get("email") or user_claims.get("name") or "Signed in")
+    st.button("Log out", on_click=st.logout, use_container_width=True)
 
     model_choice = st.selectbox(
         "AI Model",
@@ -81,7 +83,7 @@ with st.sidebar:
 
     if st.session_state.db_init:
         try:
-            sessions = db.get_all_sessions()
+            sessions = db.get_all_sessions(user_id)
             for s_id, s_title in sessions:
                 indicator = "▶ " if s_id == st.session_state.current_session_id else ""
                 if st.button(f"{indicator}{s_title}", key=s_id, use_container_width=True):
@@ -95,7 +97,7 @@ with st.sidebar:
         st.divider()
         if st.button("Delete Current Chat", type="secondary", use_container_width=True):
             try:
-                db.delete_session(st.session_state.current_session_id)
+                db.delete_session(user_id, st.session_state.current_session_id)
                 st.session_state.current_session_id = None
                 st.rerun()
             except Exception as e:
@@ -107,7 +109,9 @@ if st.session_state.current_session_id is None:
 else:
     if st.session_state.db_init:
         try:
-            st.session_state.messages = db.load_messages(st.session_state.current_session_id)
+            st.session_state.messages = db.load_messages(
+                user_id, st.session_state.current_session_id
+            )
         except Exception as e:
             st.error(f"Error loading messages: {e}")
             st.session_state.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
@@ -263,15 +267,22 @@ if prompt := st.chat_input("Ask about a stock (e.g., 'Analyze NVDA')"):
     if st.session_state.current_session_id is None and st.session_state.db_init:
         try:
             short_title = (prompt[:20] + "..") if len(prompt) > 20 else prompt
-            st.session_state.current_session_id = db.create_session(short_title)
-            db.save_message(st.session_state.current_session_id, "system", SYSTEM_PROMPT)
+            st.session_state.current_session_id = db.create_session(user_id, short_title)
+            db.save_message(
+                user_id,
+                st.session_state.current_session_id,
+                "system",
+                SYSTEM_PROMPT,
+            )
         except Exception:
             st.warning("Chat history won't be saved for this session")
 
     st.chat_message("user").markdown(prompt)
     if st.session_state.db_init and st.session_state.current_session_id:
         try:
-            db.save_message(st.session_state.current_session_id, "user", prompt)
+            db.save_message(
+                user_id, st.session_state.current_session_id, "user", prompt
+            )
         except Exception:
             pass
 
@@ -315,7 +326,12 @@ if prompt := st.chat_input("Ask about a stock (e.g., 'Analyze NVDA')"):
 
     if st.session_state.db_init and st.session_state.current_session_id:
         try:
-            db.save_message(st.session_state.current_session_id, "assistant", response_text)
+            db.save_message(
+                user_id,
+                st.session_state.current_session_id,
+                "assistant",
+                response_text,
+            )
         except Exception:
             pass
 
