@@ -16,8 +16,12 @@ class Config:
     SEC_IDENTITY = os.getenv("SEC_IDENTITY", "Agent user@example.com")
 
     # Application Settings
-    APP_PASSWORD = os.getenv("APP_PASSWORD")
-    DB_PATH = os.getenv("DB_PATH", "/tmp/data/chat_history.db")
+    DB_PATH = os.getenv("DB_PATH", "data/alpha_scout.db")
+    ALLOWED_EMAILS = {
+        email.strip().lower()
+        for email in os.getenv("ALLOWED_EMAILS", "").split(",")
+        if email.strip()
+    }
 
     # Streamlit Page Configuration
     PAGE_TITLE = "Market Intelligence"
@@ -39,7 +43,6 @@ class Config:
             "OPENAI_API_KEY": cls.OPENAI_API_KEY,
             "GOOGLE_API_KEY": cls.GOOGLE_API_KEY,
             "TAVILY_API_KEY": cls.TAVILY_API_KEY,
-            "APP_PASSWORD": cls.APP_PASSWORD,
         }
 
         missing = [key for key, value in required.items() if not value]

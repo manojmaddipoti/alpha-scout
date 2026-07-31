@@ -17,3 +17,22 @@ MODEL_CHOICES = [
     OPENAI_MODEL,
     GEMINI_MODEL,
 ]
+
+
+def provider_for_model(model_name: str) -> str:
+    """Resolve a configured model to its provider without ambiguous substrings."""
+    normalized = model_name.strip().lower()
+    configured = {
+        CLAUDE_MODEL.lower(): "claude",
+        OPENAI_MODEL.lower(): "openai",
+        GEMINI_MODEL.lower(): "gemini",
+    }
+    if normalized in configured:
+        return configured[normalized]
+    if normalized.startswith("claude-"):
+        return "claude"
+    if normalized.startswith("gemini-"):
+        return "gemini"
+    if normalized.startswith(("gpt-", "o1", "o3", "o4")):
+        return "openai"
+    raise ValueError(f"Unsupported model: {model_name}")

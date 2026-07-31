@@ -37,7 +37,6 @@ build/
 # Testing and documentation
 tests/
 test_*.py
-*.md
 LICENSE
 docs/
 

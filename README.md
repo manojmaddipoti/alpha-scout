@@ -1,142 +1,190 @@
 # Alpha Scout
 
-Alpha Scout is a private Streamlit research workspace for forensic single-stock underwriting. Give it any public ticker in any industry and it will build a buy-side thesis around one question: is this a true 1-3 year double candidate, or a durable compounder worth owning even if a quick double is unrealistic?
+AI-powered financial research workspace with multi-provider LLM agents, market
+data tools, SEC research, persistent conversations, and exportable reports.
 
-The app is intentionally aggressive, but not blindly bullish. It forces each model to prove the 2x math, compare real public competitors, read financial quality, inspect SEC filings, identify catalysts, and define kill criteria.
+Alpha Scout turns a public-company ticker into a structured, evidence-seeking
+underwriting memo. Users can route the same research workflow through Claude,
+OpenAI, or Gemini while the agent calls a shared set of market-data, SEC, peer,
+and current-news tools.
 
-## Key Features
+> Alpha Scout is a research demonstration, not investment advice. Market data
+> may be delayed, incomplete, or incorrect.
 
-- **Three independent model families**: Claude, OpenAI, and Gemini selectable from the sidebar.
-- **Configurable current models**: Defaults live in `model_config.py` and can be overridden with `.env` variables. Claude defaults to Opus 4.8 for a better cost/capability tradeoff than Fable.
-- **Industry-agnostic analysis**: The protocol adapts to software, payments, industrials, energy, semis, biotech, consumer, financials, and other public-company models.
-- **Forensic financial metrics**: True ROIC, operating cash flow, free cash flow, FCF yield, FCF/share, SBC/OCF, dilution, revenue growth, Rule of 40, Magic Number, moving averages, and RSI.
-- **Competitor matrix**: The agent can compare the target against public peers instead of analyzing a company in isolation.
-- **SEC filing teardown**: Pulls MD&A and risk-factor sections from recent filings where available.
-- **Real-time web research**: Uses Tavily for recent catalysts, management commentary, news, and market context.
-- **Downloadable reports**: Export every assistant thesis as Markdown or PDF.
-- **Private access gate**: Requires `APP_PASSWORD`; there is no hardcoded fallback password.
+## Highlights
 
-## Analysis Methodology
+- **Multi-provider agent routing** across Anthropic Claude, OpenAI, and Google
+  Gemini.
+- **Tool calling** for yfinance metrics, SEC EDGAR filings, Tavily web research,
+  and public-company peer comparisons.
+- **Forensic underwriting protocol** with scenario math, variant perception,
+  catalysts, capital allocation, bear cases, and kill criteria.
+- **Persistent, user-isolated conversations** in SQLite with an environment
+  path ready for a mounted volume.
+- **Real user authentication** through Streamlit's native OpenID Connect flow.
+- **Exportable Markdown and PDF reports** with a presentation-ready layout.
+- **Deterministic unit tests and a 25-case evaluation set** spanning core
+  research, tool selection, safety, and edge cases.
+- **Container and CI support** with a non-root Docker user, health check, pinned
+  dependencies, and GitHub Actions.
 
-The system prompt lives in `analysis_protocol.md`. It requires a structured memo with:
+## Architecture
 
-1. **Verdict**: STRONG BUY, WATCHLIST, or AVOID.
-2. **2x Probability**: horizon, confidence, and explicit base/bull/bear framing.
-3. **2x Market-Cap Math**: revenue, margin, multiple, dilution, and FCF assumptions needed for a double.
-4. **Business Reality**: how the company actually makes money and where it sits in the value chain.
-5. **Competitor Matrix**: public peers, growth, profitability, valuation, and moat comparison.
-6. **Variant Perception**: what the market likely believes and what must be wrong for alpha.
-7. **Catalyst Timeline**: events that can re-rate the stock over the next 1-3 years.
-8. **Management And Capital Allocation**: insider behavior, dilution, buybacks, M&A, and execution quality.
-9. **Financial Quality**: cash conversion, ROIC, FCF, SBC, leverage, and technical trend.
-10. **Bear Case And Kill Criteria**: measurable signals that invalidate the thesis.
+```mermaid
+flowchart LR
+    U["Authenticated user"] --> UI["Streamlit workspace"]
+    UI --> R["Provider router"]
+    R --> C["Claude"]
+    R --> O["OpenAI"]
+    R --> G["Gemini"]
+    C --> T["Shared tool dispatcher"]
+    O --> T
+    G --> T
+    T --> Y["yfinance metrics"]
+    T --> S["SEC EDGAR"]
+    T --> W["Tavily search"]
+    T --> P["Peer comparison"]
+    UI <--> D["User-scoped SQLite history"]
+    UI --> E["Markdown / PDF exports"]
+```
 
-## Installation
+The provider implementations use different function-calling APIs but converge
+on one tool schema and dispatcher. That keeps the financial research behavior
+consistent while making provider routing explicit and testable.
 
-### Prerequisites
+## Example output
 
-- Python 3.10 or higher
+See the [illustrative research memo](docs/sample_report.md). It shows the report
+shape without presenting placeholder figures as current market data.
+
+## Run locally
+
+Requirements:
+
+- Python 3.12
 - API keys for Anthropic, OpenAI, Google Gemini, and Tavily
-
-### Local Setup
+- An OIDC client from Google, Microsoft Entra ID, Okta, Auth0, or another
+  OpenID Connect provider
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/manojmaddipoti/alpha-scout.git
 cd alpha-scout
-python -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-```
-
-Edit `.env` with your API keys and a strong `APP_PASSWORD`.
-
-Run the app:
-
-```bash
+mkdir -p .streamlit
+cp .streamlit/secrets.example.toml .streamlit/secrets.toml
 streamlit run app.py
 ```
 
-### Docker Deployment
+Add the provider API keys to `.env`. Configure the OIDC values in
+`.streamlit/secrets.toml` and register
+`http://localhost:8501/oauth2callback` as an allowed redirect URL with the
+identity provider. The real secrets file is ignored by Git.
 
-```bash
-docker build -t alpha-scout .
-docker run -p 8501:8501 --env-file .env alpha-scout
-```
+For a restricted deployment, set `ALLOWED_EMAILS` to a comma-separated list.
+When it is unset, any account accepted by the configured identity provider can
+sign in; each account still sees only its own conversations.
 
 ## Configuration
 
-Required `.env` values:
+| Setting | Required | Purpose |
+|---|---:|---|
+| `ANTHROPIC_API_KEY` | Yes | Claude access |
+| `OPENAI_API_KEY` | Yes | OpenAI access |
+| `GOOGLE_API_KEY` | Yes | Gemini access |
+| `TAVILY_API_KEY` | Yes | Current web research |
+| `SEC_IDENTITY` | Yes | SEC-compliant name and email identity |
+| `ALLOWED_EMAILS` | No | Optional signed-in user allowlist |
+| `DB_PATH` | No | SQLite path; defaults to `data/alpha_scout.db` |
+| `CLAUDE_MODEL` | No | Overrides the configured Claude model |
+| `OPENAI_MODEL` | No | Overrides the configured OpenAI model |
+| `GEMINI_MODEL` | No | Overrides the configured Gemini model |
 
-```env
-ANTHROPIC_API_KEY=your_anthropic_api_key
-OPENAI_API_KEY=your_openai_api_key
-GOOGLE_API_KEY=your_google_api_key
-TAVILY_API_KEY=your_tavily_api_key
-SEC_IDENTITY=Your Name your@email.com
-APP_PASSWORD=your_private_access_code
+OIDC settings belong under `[auth]` in `.streamlit/secrets.toml`, not in source
+control. Streamlit requires `redirect_uri`, `cookie_secret`, `client_id`,
+`client_secret`, and `server_metadata_url`.
+
+## Test and evaluate
+
+Run deterministic tests for database access controls, migrations, tool
+dispatch, response sanitization, provider routing, and evaluation-data quality:
+
+```bash
+pytest -q
 ```
 
-Optional model overrides:
+The [25-case financial research set](evals/financial_research_questions.json)
+covers:
 
-```env
-OPENAI_MODEL=gpt-5.5
-CLAUDE_MODEL=claude-opus-4-8
-GEMINI_MODEL=gemini-3.1-pro
+- full equity underwriting;
+- company and peer comparisons;
+- SEC filing analysis;
+- current events;
+- financial quality;
+- financial-safety scenarios;
+- invalid, ambiguous, and metric-inappropriate requests.
+
+Model response quality belongs in rubric-based evaluation rather than brittle
+unit assertions. See [evaluation notes](evals/README.md).
+
+## Docker
+
+```bash
+docker build -t alpha-scout .
+docker run --env-file .env \
+  -v alpha-scout-data:/app/data \
+  -v "$PWD/.streamlit/secrets.toml:/app/.streamlit/secrets.toml:ro" \
+  -p 8501:8501 \
+  alpha-scout
 ```
 
-Model availability changes over time. When providers release stronger models or retire older ones, update these three values in `.env` or `model_config.py`.
+The image runs as an unprivileged user, keeps CORS and XSRF protection enabled,
+and exposes a Streamlit health check. The named volume makes SQLite persistent
+across container replacement.
 
-## Usage
+## Deploy on Streamlit Community Cloud
 
-1. Launch the app and log in with your access code.
-2. Select Claude, OpenAI, or Gemini in the sidebar.
-3. Ask for a ticker thesis, for example:
+1. Create an app from this GitHub repository and select `app.py`.
+2. Choose Python 3.12.
+3. Paste the `.env` API values and `[auth]` OIDC configuration into the
+   deployment's Secrets settings.
+4. Change the OIDC redirect URI to
+   `https://<your-app>.streamlit.app/oauth2callback` in both Streamlit secrets
+   and the identity-provider client.
+5. Add the final app URL to this README after verifying authentication and one
+   end-to-end research request.
 
-```text
-Analyze FOUR for a 1-3 year double. Include competitors, valuation math, catalysts, bear case, and kill criteria.
-```
+Community Cloud's local filesystem is not durable application storage. The
+default SQLite database is appropriate for local and container demos with a
+volume; use managed Postgres or another durable database before relying on chat
+history in a multi-instance production deployment.
 
-4. Review the generated thesis, price chart, and competitor/financial analysis.
-5. Download the report as Markdown for editing or PDF for archive/sharing.
-
-## Project Structure
+## Project structure
 
 ```text
 alpha-scout/
-├── analysis_protocol.md  # Industry-agnostic underwriting protocol
-├── app.py                # Streamlit chat UI and report exports
-├── config.py             # Environment-backed app configuration
-├── database.py           # SQLite chat history management
-├── metrics.py            # Corrected financial and competitor metrics
-├── model_config.py       # Central model defaults and model dropdown choices
-├── search_agent.py       # Multi-model agent logic and tool calling
-├── requirements.txt      # Runtime dependencies
-├── Dockerfile            # Container configuration
-├── .env.example          # Environment variable template
-└── README.md
+├── .github/workflows/tests.yml       # CI test workflow
+├── .streamlit/                       # Secure server defaults and auth example
+├── docs/sample_report.md             # Illustrative output
+├── evals/                            # 25-case research evaluation set
+├── tests/                            # Deterministic unit tests
+├── analysis_protocol.md              # Underwriting system prompt
+├── app.py                            # Authenticated Streamlit workspace
+├── config.py                         # Environment-backed configuration
+├── database.py                       # User-scoped SQLite persistence
+├── metrics.py                        # Financial and competitor metrics
+├── model_config.py                   # Provider/model routing configuration
+├── search_agent.py                   # Tool calling and provider loops
+├── requirements.txt                  # Single pinned dependency definition
+└── Dockerfile
 ```
 
-## Technology Stack
+## Security
 
-- **Frontend**: Streamlit
-- **AI Providers**: Anthropic Claude, OpenAI, Google Gemini
-- **Financial Data**: yfinance, SEC EDGAR tools
-- **Web Search**: Tavily API
-- **Database**: SQLite
-- **Report Generation**: Markdown and WeasyPrint PDF
-
-## Security Notes
-
-- Set a strong `APP_PASSWORD`; the app refuses to start without one.
-- Keep `.env` local and out of version control.
-- Store production secrets in GitHub/hosting secrets, not in code.
-- Rotate any API key that was committed, pasted into logs, or shared outside your machine.
-
-## Troubleshooting
-
-- **Login does not appear**: Confirm `APP_PASSWORD` is set.
-- **API failures**: Verify provider keys and model access.
-- **SEC filing errors**: Confirm `SEC_IDENTITY` is a real name and email format.
-- **Database errors**: Ensure `/tmp/data` is writable, or set `DB_PATH`.
-- **PDF errors**: WeasyPrint may require system libraries on some machines.
+- OIDC replaces the former shared application password.
+- Saved conversations are filtered by the authenticated user's stable identity.
+- CORS and XSRF protections are explicitly enabled.
+- Production secrets stay outside the repository.
+- The application does not execute trades or guarantee investment outcomes.
