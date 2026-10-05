@@ -183,3 +183,21 @@ Update the local OIDC redirect URI to use port 8502 as well.
 - Rotate credentials exposed in logs or screenshots.
 - Mount persistent data with the minimum necessary permissions.
 - Treat generated research as unverified and not as investment advice.
+
+## Updated research workspace
+
+Model defaults are `claude-opus-5-5`, `gpt-6.1-sol`, and `gemini-3.1-pro`.
+Only one provider key is needed to start; configure a second provider to enable the
+independent challenge selector. Configure Tavily and SEC identity for full research.
+Missing credits or unavailable models remain provider-side errors; fallback research
+is explicitly marked unchallenged. No provider error is saved as a completed memo.
+
+After signing in, expand **Portfolio context and research watchlist** to maintain
+private account notes and candidate rows. Saving reconfirms the data timestamp.
+Existing chat and ownership tables are preserved; the workspace table is created
+additively. Back up your SQLite file before rollout. The app does not import another
+project's personal portfolio, execute trades or automatically update candidate stages.
+
+If native WeasyPrint libraries are missing, the app still works with Markdown exports;
+PDF downloads appear only when rendering succeeds. The Docker image includes the
+native libraries. See the README's October update for implementation limits and tests.

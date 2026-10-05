@@ -91,9 +91,9 @@ sign in; each account still sees only its own conversations.
 
 | Setting | Required | Purpose |
 |---|---:|---|
-| `ANTHROPIC_API_KEY` | Yes | Claude access |
-| `OPENAI_API_KEY` | Yes | OpenAI access |
-| `GOOGLE_API_KEY` | Yes | Gemini access |
+| `ANTHROPIC_API_KEY` | One provider required | Claude access |
+| `OPENAI_API_KEY` | One provider required | OpenAI access |
+| `GOOGLE_API_KEY` | One provider required | Gemini access |
 | `TAVILY_API_KEY` | Yes | Current web research |
 | `SEC_IDENTITY` | Yes | SEC-compliant name and email identity |
 | `ALLOWED_EMAILS` | No | Optional signed-in user allowlist |
@@ -188,3 +188,53 @@ alpha-scout/
 - CORS and XSRF protections are explicitly enabled.
 - Production secrets stay outside the repository.
 - The application does not execute trades or guarantee investment outcomes.
+
+## October 2026 research reliability update
+
+The interactive workspace now defaults to Claude Opus 5.5 (`claude-opus-5-5`) and
+OpenAI 6.1 Sol (`gpt-6.1-sol`); Gemini remains available. Environment overrides are
+loaded before model selection. Configure at least one provider key; only configured
+providers appear in the selector. A second provider enables an independent challenge
+and additional API charges. Tavily and a real `SEC_IDENTITY` enable search and filings;
+missing tools produce explicit evidence gaps. Provider credits/access remain required.
+
+OpenAI uses Responses with stateless reasoning/function-call replay. Claude streams
+its complete message. Gemini preserves provider-signed tool content. Empty, truncated
+and exhausted responses are failures, not completed analyses. When the proposer fails,
+a configured challenger can produce a clearly marked *unchallenged fallback*. A failed
+challenge leaves the proposal marked *challenge unavailable*, never independently approved.
+The app always applies the current protocol even when reopening an old conversation.
+
+Use **Portfolio context and research watchlist** to record account types, holdings,
+cash by account, constraints and dated thesis notes. These are stored in the authenticated
+user's SQLite workspace; no personal portfolio from another project is embedded in code.
+Context becomes stale after 35 days and must be reconfirmed after material changes.
+Review dates flag entries needing attention when the app is opened. Stages are maintained
+by the user; they never authorize trades. Export the workspace as JSON for backup.
+
+Research emphasizes scenario valuation, alternatives to new purchases, concentration,
+tax/account restrictions, disconfirming evidence and source dates. The 15% CAGR objective
+is aspirational; a 25–30% drawdown tolerance cannot be guaranteed. Moving averages remain
+research signals, not automated sell rules or a claim to predict crashes.
+
+Metrics now separate raw completed-session closes from adjusted trend prices, label
+freshness, reject nonfinite numbers, and avoid treating missing debt/cash/equity as zero.
+ROIC is explicitly an ending-capital estimate. SEC retrieval includes annual, interim
+and current reports, with URLs, dates and missing-document flags. Excerpts can still omit
+earnings attachments; the analyst must verify issuer releases. PDF exports sanitize HTML
+and block all external/local resource fetching.
+
+### Scope and verification
+
+This app remains an interactive research tool. It does **not** implement the separate
+newsletter project's deterministic evidence/quotation gates, account-level sizing,
+portfolio import/reconciliation, automatic watchlist promotion, scheduled monitors,
+broker execution or actual portfolio performance accounting. Saved notes and two-model
+agreement are not verified financial evidence. No trade is marked execution-ready.
+
+Run `python -m pytest -q` after installing `requirements.txt`. Regression tests cover
+provider failures and continuation state, ownership isolation, stale notes, completed
+exchange sessions, missing accounting values, SEC document coverage and export resource
+blocking. Tests do not spend API credits. Live model access and deployment authentication
+must be checked in the deployment environment. Back up SQLite before upgrading; the new
+workspace table is additive and existing conversations retain their ownership.
