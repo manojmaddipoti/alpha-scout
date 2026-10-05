@@ -56,69 +56,43 @@ def get_sec_filing(ticker: str):
     try:
         from edgar import Company, set_identity
 
-        sec_identity = os.getenv("SEC_IDENTITY", "Agent user@example.com")
+        sec_identity = os.getenv("SEC_IDENTITY")
+        if not sec_identity:
+            return json.dumps({"error": "SEC_IDENTITY must be configured for filing retrieval"})
         set_identity(sec_identity)
-
         company = Company(ticker)
-        annual = company.get_filings(form=["10-K", "20-F"])
-        latest_annual = annual.latest() if annual else None
-        quarterly = company.get_filings(form=["10-Q", "6-K"])
-        latest_quarter = quarterly.latest() if quarterly else None
-
-        filing = latest_annual or latest_quarter
-        if not filing:
-            return f"No recent SEC filings found for {ticker}."
-
-        source_used = f"{filing.form} ({filing.filing_date})"
-        mda_text = ""
-        risk_text = ""
-
-        try:
-            filing_obj = filing.obj()
-            for attr in ("management_discussion", "mda", "item_7"):
-                if hasattr(filing_obj, attr) and getattr(filing_obj, attr):
-                    mda_text = str(getattr(filing_obj, attr))
-                    break
-            for attr in ("risk_factors", "item_1a"):
-                if hasattr(filing_obj, attr) and getattr(filing_obj, attr):
-                    risk_text = str(getattr(filing_obj, attr))
-                    break
-        except Exception:
-            pass
-
-        if not mda_text or not risk_text:
-            full_text = filing.text()
-            if not risk_text:
-                m = re.search(
-                    r"Item\s*1A\.?\s*Risk\s*Factors(.{500,80000}?)(?=Item\s*1B|Item\s*2\.?\s*Properties)",
-                    full_text,
-                    re.IGNORECASE | re.DOTALL,
-                )
-                if m:
-                    risk_text = m.group(1).strip()
-            if not mda_text:
-                m = re.search(
-                    r"Item\s*7\.?\s*Management.{0,80}Discussion(.{500,80000}?)(?=Item\s*7A|Item\s*8\.?\s*Financial)",
-                    full_text,
-                    re.IGNORECASE | re.DOTALL,
-                )
-                if m:
-                    mda_text = m.group(1).strip()
-
-        parts = [f"**Source:** {source_used}"]
-        parts.append(
-            f"\n**Item 7 / MD&A:**\n{mda_text[:SEC_SECTION_TRUNC]}"
-            if mda_text
-            else "\n**Item 7 / MD&A:** Could not extract."
-        )
-        parts.append(
-            f"\n**Item 1A / Risk Factors:**\n{risk_text[:SEC_SECTION_TRUNC]}"
-            if risk_text
-            else "\n**Item 1A / Risk Factors:** Could not extract."
-        )
-        return "\n".join(parts)
-    except Exception as exc:
-        return f"Error fetching SEC filings for {ticker}: {exc}"
+        documents = []
+        gaps = []
+        for label, forms in [("annual", ["10-K", "20-F"]), ("interim", ["10-Q", "6-K"]), ("current", ["8-K"] )]:
+            try:
+                filings = company.get_filings(form=forms)
+                filing = filings.latest() if filings else None
+                if not filing:
+                    gaps.append(label + " filing unavailable")
+                    continue
+                excerpts = {}
+                try:
+                    obj = filing.obj()
+                    for key, attrs in {"management_discussion": ("management_discussion", "mda", "item_7"),
+                                       "risk_factors": ("risk_factors", "item_1a")}.items():
+                        for attr in attrs:
+                            value = getattr(obj, attr, None)
+                            if value:
+                                excerpts[key] = str(value)[:SEC_SECTION_TRUNC]
+                                break
+                except Exception:
+                    pass
+                if not excerpts:
+                    excerpts["document_excerpt"] = str(filing.text())[:SEC_SECTION_TRUNC * 2]
+                documents.append({"form": filing.form, "filing_date": str(filing.filing_date),
+                                  "url": getattr(filing, "document_url", None) or getattr(filing, "homepage_url", None),
+                                  "excerpts": excerpts})
+            except Exception:
+                gaps.append(label + " retrieval failed")
+        return json.dumps({"ticker": ticker, "documents": documents, "gaps": gaps,
+                           "limitations": "Excerpts may omit material sections or earnings attachments. Latest 6-K may not be earnings; verify with issuer release."}, default=str)
+    except Exception:
+        return json.dumps({"error": "SEC filing retrieval failed", "ticker": ticker})
 
 
 def get_financial_metrics(ticker: str):
@@ -151,6 +125,15 @@ def web_search(query: str):
 
 
 def _dispatch_tool(name: str, args: dict, found_tickers: list[str]) -> str:
+    try:
+        if not isinstance(args, dict):
+            raise ValueError("Tool arguments must be an object")
+        return _dispatch_valid_tool(name, args, found_tickers)
+    except Exception as exc:
+        return json.dumps({"error": "Tool failed", "tool": name, "type": type(exc).__name__})
+
+
+def _dispatch_valid_tool(name: str, args: dict, found_tickers: list[str]) -> str:
     if name == "web_search":
         return web_search(args["query"])
     if name == "get_financial_metrics":
@@ -244,44 +227,38 @@ TOOLS_CLAUDE = [
 TOOLS_GEMINI = [{"function_declarations": TOOL_SPECS}]
 
 
+class ResearchFailure(RuntimeError):
+    """No complete research result is available; never save this as a verdict."""
+
+
 def run_openai_logic(messages, model_name=OPENAI_MODEL):
-    """Execute OpenAI function calling with a multi-turn tool loop."""
     try:
         client = get_openai_client()
-        conversation = [dict(message) for message in messages]
-        found_tickers: list[str] = []
-
+        conversation = [dict(m) for m in messages]
+        found_tickers = []
         for _ in range(MAX_TOOL_ITERATIONS):
-            response = client.chat.completions.create(
-                model=model_name,
-                messages=conversation,
-                tools=TOOLS_OPENAI,
-                max_completion_tokens=MAX_OUTPUT_TOKENS,
+            response = client.responses.create(
+                model=model_name, input=conversation,
+                tools=[{"type": "function", **spec, "strict": False} for spec in TOOL_SPECS],
+                max_output_tokens=16000, store=False,
+                include=["reasoning.encrypted_content"],
             )
-            assistant_msg = response.choices[0].message
-
-            if not assistant_msg.tool_calls:
-                return assistant_msg.content or "", sorted(set(found_tickers))
-
-            conversation.append({
-                "role": "assistant",
-                "content": assistant_msg.content,
-                "tool_calls": [tool_call.model_dump() for tool_call in assistant_msg.tool_calls],
-            })
-
-            for tool_call in assistant_msg.tool_calls:
-                args = json.loads(tool_call.function.arguments or "{}")
-                result = _dispatch_tool(tool_call.function.name, args, found_tickers)
-                conversation.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "name": tool_call.function.name,
-                    "content": result,
-                })
-
-        return "OpenAI hit max tool iterations before finalizing the analysis.", sorted(set(found_tickers))
+            if response.status != "completed":
+                raise ResearchFailure("OpenAI returned an incomplete response")
+            calls = [item for item in response.output if item.type == "function_call"]
+            if not calls:
+                if not response.output_text.strip():
+                    raise ResearchFailure("OpenAI returned no research text")
+                return response.output_text, sorted(set(found_tickers))
+            conversation.extend(item.model_dump(exclude_none=True) for item in response.output)
+            for call in calls:
+                result = _dispatch_tool(call.name, json.loads(call.arguments or "{}"), found_tickers)
+                conversation.append({"type": "function_call_output", "call_id": call.call_id, "output": result})
+        raise ResearchFailure("OpenAI exceeded the research tool budget")
+    except ResearchFailure:
+        raise
     except Exception as exc:
-        return f"OpenAI error: {exc}", []
+        raise ResearchFailure("OpenAI request failed. Check model access, API credits and provider status.") from exc
 
 
 def run_gemini_logic(messages, model_name=GEMINI_MODEL):
@@ -320,24 +297,21 @@ def run_gemini_logic(messages, model_name=GEMINI_MODEL):
                         tool_calls.append(part.function_call)
 
             if not tool_calls:
-                return response.text or "", sorted(set(found_tickers))
+                if not response.candidates or str(response.candidates[0].finish_reason).split(".")[-1] != "STOP" or not (response.text or "").strip():
+                    raise ResearchFailure("Gemini returned incomplete or empty research")
+                return response.text, sorted(set(found_tickers))
 
+            # Preserve original content, including provider thought signatures.
+            contents.append(response.candidates[0].content)
+            results = []
             for func_call in tool_calls:
-                func_name = func_call.name
-                func_args = dict(func_call.args)
-                result = _dispatch_tool(func_name, func_args, found_tickers)
-                contents.append({
-                    "role": "model",
-                    "parts": [{"function_call": {"name": func_name, "args": func_args}}],
-                })
-                contents.append({
-                    "role": "user",
-                    "parts": [{"function_response": {"name": func_name, "response": {"result": result}}}],
-                })
+                result = _dispatch_tool(func_call.name, dict(func_call.args), found_tickers)
+                results.append({"function_response": {"name": func_call.name, "response": {"result": result}}})
+            contents.append({"role": "user", "parts": results})
 
-        return "Gemini hit max tool iterations before finalizing the analysis.", sorted(set(found_tickers))
+        raise ResearchFailure("Gemini exceeded the research tool budget")
     except Exception as exc:
-        return f"Gemini error: {exc}", []
+        raise ResearchFailure("Gemini research failed. Check model access, API credits and provider status.") from exc
 
 
 def run_claude_logic(messages, model_name=CLAUDE_MODEL):
@@ -357,23 +331,26 @@ def run_claude_logic(messages, model_name=CLAUDE_MODEL):
 
         cached_system = [{
             "type": "text",
-            "text": SYSTEM_PROMPT,
+            "text": "\n\n".join(m["content"] for m in messages if m["role"] == "system") or SYSTEM_PROMPT,
             "cache_control": {"type": "ephemeral"},
         }]
         cached_tools = [dict(tool) for tool in TOOLS_CLAUDE]
         cached_tools[-1] = {**cached_tools[-1], "cache_control": {"type": "ephemeral"}}
 
         for _ in range(MAX_TOOL_ITERATIONS):
-            response = client.messages.create(
-                model=model_name,
-                max_tokens=MAX_OUTPUT_TOKENS,
-                system=cached_system,
-                tools=cached_tools,
-                messages=claude_messages,
-            )
+            with client.messages.stream(
+                model=model_name, max_tokens=32000,
+                thinking={"type": "adaptive"},
+                system=cached_system, tools=cached_tools, messages=claude_messages,
+            ) as stream:
+                response = stream.get_final_message()
 
             if response.stop_reason != "tool_use":
+                if response.stop_reason != "end_turn":
+                    raise ResearchFailure("Claude returned incomplete research")
                 final_text = "".join(block.text for block in response.content if hasattr(block, "text"))
+                if not final_text.strip():
+                    raise ResearchFailure("Claude returned no research text")
                 return final_text, sorted(set(found_tickers))
 
             claude_messages.append({"role": "assistant", "content": response.content})
@@ -391,9 +368,9 @@ def run_claude_logic(messages, model_name=CLAUDE_MODEL):
 
             claude_messages.append({"role": "user", "content": tool_results})
 
-        return "Claude hit max tool iterations before finalizing the analysis.", sorted(set(found_tickers))
+        raise ResearchFailure("Claude exceeded the research tool budget")
     except Exception as exc:
-        return f"Claude error: {exc}", []
+        raise ResearchFailure("Claude research failed. Check model access, API credits and provider status.") from exc
 
 
 def run_smart_agent(messages, model_choice=CLAUDE_MODEL):
@@ -406,4 +383,4 @@ def run_smart_agent(messages, model_choice=CLAUDE_MODEL):
             return run_claude_logic(messages, model_choice)
         return run_openai_logic(messages, model_choice)
     except Exception as exc:
-        return f"Agent execution error: {exc}", []
+        raise ResearchFailure(str(exc) if isinstance(exc, ResearchFailure) else "Research execution failed") from exc

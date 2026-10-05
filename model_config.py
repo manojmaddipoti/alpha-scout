@@ -7,9 +7,12 @@ environment variables when a provider releases or retires a model.
 from __future__ import annotations
 
 import os
+from dotenv import load_dotenv
 
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.5")
-CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-opus-4-8")
+load_dotenv()
+
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-6.1-sol")
+CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-opus-5-5")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-pro")
 
 MODEL_CHOICES = [

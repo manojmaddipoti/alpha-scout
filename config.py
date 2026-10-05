@@ -36,18 +36,13 @@ class Config:
     STOCK_DATA_TTL = 3600
 
     @classmethod
+    def available_models(cls):
+        from model_config import provider_for_model
+        keys = {"claude": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY", "gemini": "GOOGLE_API_KEY"}
+        return [m for m in MODEL_CHOICES if os.getenv(keys[provider_for_model(m)])]
+
+    @classmethod
     def validate(cls):
-        """Validate that required configuration is present."""
-        required = {
-            "ANTHROPIC_API_KEY": cls.ANTHROPIC_API_KEY,
-            "OPENAI_API_KEY": cls.OPENAI_API_KEY,
-            "GOOGLE_API_KEY": cls.GOOGLE_API_KEY,
-            "TAVILY_API_KEY": cls.TAVILY_API_KEY,
-        }
-
-        missing = [key for key, value in required.items() if not value]
-
-        if missing:
-            raise ValueError(f"Missing required configuration: {', '.join(missing)}")
-
+        if not cls.available_models():
+            raise ValueError("Configure at least one AI provider API key")
         return True

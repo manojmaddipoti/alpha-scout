@@ -24,6 +24,7 @@ def get_connection() -> sqlite3.Connection:
 def init_db() -> None:
     """Create tables and migrate databases created before per-user isolation."""
     with get_connection() as connection:
+        connection.execute("CREATE TABLE IF NOT EXISTS research_workspaces (user_id TEXT PRIMARY KEY, payload TEXT NOT NULL)")
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS sessions (
@@ -159,3 +160,20 @@ def clear_all_data() -> None:
     with get_connection() as connection:
         connection.execute("DELETE FROM messages")
         connection.execute("DELETE FROM sessions")
+        connection.execute("DELETE FROM research_workspaces")
+
+
+def load_workspace(user_id: str) -> dict:
+    import json
+    with get_connection() as connection:
+        row = connection.execute('SELECT payload FROM research_workspaces WHERE user_id = ?', (user_id,)).fetchone()
+    return json.loads(row[0]) if row else {'context': '', 'entries': []}
+
+
+def save_workspace(user_id: str, context: str, entries: list) -> None:
+    import json
+    from research_workspace import validate_workspace
+    payload = json.dumps(validate_workspace(context, entries), allow_nan=False)
+    with get_connection() as connection:
+        connection.execute('INSERT INTO research_workspaces (user_id, payload) VALUES (?, ?) '
+                           'ON CONFLICT(user_id) DO UPDATE SET payload = excluded.payload', (user_id, payload))

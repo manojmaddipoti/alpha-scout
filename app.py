@@ -1,12 +1,16 @@
 import time
+import json
+import pandas as pd
+from datetime import date
+from market_sessions import completed_history
+from research_workspace import reviewed_research, workspace_prompt
+from report_safety import safe_report_html, deny_resource_fetch
 import streamlit as st
 import yfinance as yf
-import markdown as md_lib
-from weasyprint import HTML, CSS
 from datetime import datetime
-from search_agent import run_smart_agent, SYSTEM_PROMPT
+from search_agent import SYSTEM_PROMPT
 from config import Config
-from model_config import MODEL_CHOICES
+from model_config import MODEL_CHOICES, provider_for_model
 import database as db
 
 # Configuration
@@ -49,6 +53,11 @@ if Config.ALLOWED_EMAILS and user_email not in Config.ALLOWED_EMAILS:
     st.button("Log out", on_click=st.logout)
     st.stop()
 
+# Clear widget/session data when an authenticated identity changes.
+if st.session_state.get("authenticated_owner") != user_id:
+    st.session_state.clear()
+    st.session_state.authenticated_owner = user_id
+
 # Session and Database Initialization
 if "db_init" not in st.session_state:
     try:
@@ -70,9 +79,13 @@ with st.sidebar:
 
     model_choice = st.selectbox(
         "AI Model",
-        MODEL_CHOICES,
+        Config.available_models() or MODEL_CHOICES,
         index=0
     )
+
+    alternatives = [m for m in Config.available_models() if provider_for_model(m) != provider_for_model(model_choice)]
+    challenger = st.selectbox("Independent challenge", ["None", *alternatives], index=1 if alternatives else 0)
+    st.caption("A second provider checks the thesis. Each review uses additional API credits.")
 
     if st.button("New Chat", use_container_width=True, type="primary"):
         st.session_state.current_session_id = None
@@ -220,10 +233,8 @@ blockquote {
 
 def create_pdf(text):
     try:
-        html_body = md_lib.markdown(
-            text,
-            extensions=["tables", "fenced_code", "nl2br", "sane_lists"],
-        )
+        from weasyprint import HTML, CSS
+        html_body = safe_report_html(text)
         date_str = datetime.now().strftime("%B %d, %Y")
         full_html = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"></head><body>
@@ -233,9 +244,43 @@ def create_pdf(text):
   </div>
   {html_body}
 </body></html>"""
-        return HTML(string=full_html).write_pdf(stylesheets=[CSS(string=PDF_CSS)])
+        return HTML(string=full_html, url_fetcher=deny_resource_fetch).write_pdf(stylesheets=[CSS(string=PDF_CSS)])
     except Exception:
         return None
+
+# Private workspace: manually maintained data, isolated by authenticated owner.
+workspace = {"context": "", "entries": []}
+if st.session_state.db_init:
+    workspace = db.load_workspace(user_id)
+    with st.expander("Portfolio context and research watchlist"):
+        st.caption("Private to your sign-in. Enter account types, holdings/values, cash by account, goals, drawdown tolerance and restrictions. Do not enter credentials. Reconfirm after changes; notes expire for decision use after 35 days.")
+        with st.form("workspace"):
+            context = st.text_area("Portfolio context", value=workspace.get("context", ""), height=180, max_chars=20000)
+            table = pd.DataFrame(workspace.get("entries", []), columns=["ticker", "stage", "thesis", "review_date"])
+            table["review_date"] = pd.to_datetime(table["review_date"]).dt.date
+            entries_table = st.data_editor(table, num_rows="dynamic", hide_index=True, column_config={
+                "ticker": st.column_config.TextColumn("Ticker", required=True),
+                "stage": st.column_config.SelectboxColumn("Research stage", options=["candidate", "researching", "watchlist", "held", "paused", "rejected"], required=True),
+                "thesis": st.column_config.TextColumn("Thesis / what to verify", required=True),
+                "review_date": st.column_config.DateColumn("Review by", required=True),
+            })
+            st.caption("Add a row to track a candidate. Research stages never authorize a trade.")
+            if st.form_submit_button("Save and confirm current notes"):
+                try:
+                    entries = entries_table.to_dict("records")
+                    for entry in entries:
+                        entry["ticker"] = str(entry["ticker"]).strip().upper()
+                        entry["review_date"] = str(entry["review_date"])
+                    db.save_workspace(user_id, context, entries)
+                    st.rerun()
+                except (ValueError, TypeError) as exc:
+                    st.error(str(exc))
+        if workspace.get("entries"):
+            due = [entry["ticker"] for entry in workspace["entries"] if entry["review_date"] <= date.today().isoformat() and entry["stage"] not in ("paused", "rejected")]
+            if due:
+                st.warning("Research review due: " + ", ".join(due))
+        st.download_button("Export private research workspace", json.dumps(workspace, indent=2), "research_workspace.json", "application/json")
+st.info("Research workspace: model outputs are proposals, not validated trade instructions. Check the independent challenge and unresolved data gaps.")
 
 # Chat Interface
 for i, message in enumerate(st.session_state.messages):
@@ -291,7 +336,11 @@ if prompt := st.chat_input("Ask about a stock (e.g., 'Analyze NVDA')"):
     with st.chat_message("assistant"):
         with st.spinner("Analyzing market data..."):
             try:
-                response_text, found_tickers = run_smart_agent(st.session_state.messages, model_choice)
+                # Always use the current protocol, not a historical system prompt saved in SQLite.
+                request = [{"role": "system", "content": SYSTEM_PROMPT},
+                           {"role": "user", "content": workspace_prompt(workspace)},
+                           *[m for m in st.session_state.messages if m["role"] != "system"]]
+                response_text, found_tickers = reviewed_research(request, model_choice, None if challenger == "None" else challenger)
 
                 if found_tickers:
                     for ticker in found_tickers:
@@ -322,7 +371,7 @@ if prompt := st.chat_input("Ask about a stock (e.g., 'Analyze NVDA')"):
             except Exception as e:
                 error_msg = f"Error generating response: {str(e)}"
                 st.error(error_msg)
-                response_text = error_msg
+                st.stop()  # Failed provider output must never be persisted as completed research.
 
     if st.session_state.db_init and st.session_state.current_session_id:
         try:
