@@ -35,6 +35,9 @@ def init_db() -> None:
             )
             """
         )
+        connection.execute("""CREATE TABLE IF NOT EXISTS research_reports (
+            session_id TEXT PRIMARY KEY, ticker TEXT NOT NULL, payload TEXT NOT NULL,
+            FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE)""")
         columns = {
             row[1] for row in connection.execute("PRAGMA table_info(sessions)").fetchall()
         }
@@ -177,3 +180,32 @@ def save_workspace(user_id: str, context: str, entries: list) -> None:
     with get_connection() as connection:
         connection.execute('INSERT INTO research_workspaces (user_id, payload) VALUES (?, ?) '
                            'ON CONFLICT(user_id) DO UPDATE SET payload = excluded.payload', (user_id, payload))
+
+
+def save_research_report(user_id: str, payload: str) -> str:
+    """Atomically save a ticker-only research run and its conversation."""
+    import json
+    from stock_research import normalize_ticker
+    result = json.loads(payload)
+    ticker = normalize_ticker(result['ticker'])
+    if not isinstance(result.get('report'), str) or not result['report'].strip():
+        raise ValueError('A research report is required')
+    session_id = str(uuid.uuid4())
+    with get_connection() as connection:
+        connection.execute('INSERT INTO sessions (id, user_id, title) VALUES (?, ?, ?)',
+                           (session_id, user_id, f'{ticker} independent research'))
+        connection.execute('INSERT INTO research_reports (session_id, ticker, payload) VALUES (?, ?, ?)',
+                           (session_id, ticker, payload))
+        connection.executemany('INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)',
+                               [(session_id, 'user', f'Research {ticker} independently'),
+                                (session_id, 'assistant', result['report'])])
+    return session_id
+
+
+def load_research_report(user_id: str, session_id: str) -> dict | None:
+    import json
+    with get_connection() as connection:
+        row = connection.execute('SELECT research_reports.payload FROM research_reports JOIN sessions '
+                                 'ON sessions.id = research_reports.session_id '
+                                 'WHERE sessions.id = ? AND sessions.user_id = ?', (session_id, user_id)).fetchone()
+    return json.loads(row[0]) if row else None

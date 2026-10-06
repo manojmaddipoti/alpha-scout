@@ -141,3 +141,12 @@ git diff --check passed
 
 Live provider calls and hosted OIDC login require deployment credentials and
 must be verified separately.
+
+## October independent research separation
+
+The ticker-first app replaces the portfolio workspace. It never reads that workspace
+or seeds new research with old chats. Existing notes and archived conversations are
+retained, not deleted. An additive research_reports table stores new reports and source
+records under the conversation owner's access controls. The newsletter repository is
+unchanged. Competitor reasoning, a retrieval audit and supported valuation arithmetic
+are now explicit parts of independent research. See the README for limitations.

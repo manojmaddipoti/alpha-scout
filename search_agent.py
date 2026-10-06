@@ -2,6 +2,9 @@ import json
 import os
 import re
 from pathlib import Path
+from urllib.parse import quote
+from research_evidence import ACTIVE_EVIDENCE, public_url
+from valuation import calculate_valuation
 
 import anthropic
 from dotenv import load_dotenv
@@ -16,7 +19,7 @@ load_dotenv()
 
 PROTOCOL_PATH = Path(__file__).parent / "analysis_protocol.md"
 SYSTEM_PROMPT = PROTOCOL_PATH.read_text(encoding="utf-8")
-MAX_TOOL_ITERATIONS = 8
+MAX_TOOL_ITERATIONS = 12
 MAX_OUTPUT_TOKENS = 12000
 WEB_SEARCH_MAX_RESULTS = 5
 WEB_SEARCH_CONTENT_TRUNC = 1800
@@ -27,7 +30,7 @@ def get_openai_client():
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise ValueError("OPENAI_API_KEY not found")
-    return OpenAI(api_key=api_key)
+    return OpenAI(api_key=api_key, timeout=180.0, max_retries=1)
 
 
 def get_tavily_client():
@@ -41,14 +44,14 @@ def get_gemini_client():
     api_key = os.getenv("GOOGLE_API_KEY")
     if not api_key:
         raise ValueError("GOOGLE_API_KEY not found")
-    return genai.Client(api_key=api_key)
+    return genai.Client(api_key=api_key, http_options={"timeout": 180000})
 
 
 def get_claude_client():
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         raise ValueError("ANTHROPIC_API_KEY not found")
-    return anthropic.Anthropic(api_key=api_key)
+    return anthropic.Anthropic(api_key=api_key, timeout=180.0, max_retries=1)
 
 
 def get_sec_filing(ticker: str):
@@ -70,6 +73,15 @@ def get_sec_filing(ticker: str):
                 if not filing:
                     gaps.append(label + " filing unavailable")
                     continue
+                source_url = getattr(filing, "document_url", None)
+                if not source_url:
+                    primary = getattr(filing, "primary_document", None)
+                    accession = str(getattr(filing, "accession_no", "")).replace("-", "")
+                    cik = getattr(filing, "cik", None)
+                    if primary and accession.isdigit() and str(cik).isdigit():
+                        source_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{quote(str(primary), safe='')}"
+                    else:
+                        source_url = getattr(filing, "homepage_url", None)
                 excerpts = {}
                 try:
                     obj = filing.obj()
@@ -83,9 +95,28 @@ def get_sec_filing(ticker: str):
                 except Exception:
                     pass
                 if not excerpts:
-                    excerpts["document_excerpt"] = str(filing.text())[:SEC_SECTION_TRUNC * 2]
+                    try:
+                        full_text = filing.text()
+                        if full_text:
+                            excerpts["document_excerpt"] = str(full_text)[:SEC_SECTION_TRUNC * 2]
+                    except Exception:
+                        pass
+                if not excerpts and source_url and public_url(source_url):
+                    try:
+                        extracted = get_tavily_client().extract(
+                            urls=[source_url], extract_depth="advanced", format="text",
+                            query="management discussion risk factors revenue margins cash flow liquidity financial results guidance",
+                            chunks_per_source=8,
+                        )
+                        pages = extracted.get("results", [])
+                        if pages and pages[0].get("raw_content"):
+                            excerpts["targeted_document_excerpt"] = pages[0]["raw_content"][:SEC_SECTION_TRUNC * 2]
+                    except Exception:
+                        pass
+                if not excerpts:
+                    gaps.append(label + " filing metadata available but document text unavailable")
                 documents.append({"form": filing.form, "filing_date": str(filing.filing_date),
-                                  "url": getattr(filing, "document_url", None) or getattr(filing, "homepage_url", None),
+                                  "url": source_url, "content_status": "extracted" if excerpts else "metadata_only",
                                   "excerpts": excerpts})
             except Exception:
                 gaps.append(label + " retrieval failed")
@@ -96,7 +127,7 @@ def get_sec_filing(ticker: str):
 
 
 def get_financial_metrics(ticker: str):
-    """Fetch corrected financial metrics with true ROIC and FCF fields."""
+    """Fetch corrected financial metrics with estimated ending-capital ROIC and FCF fields."""
     return get_equity_metrics_json(ticker)
 
 
@@ -121,19 +152,42 @@ def web_search(query: str):
             result.pop("raw_content", None)
         return json.dumps(results)
     except Exception as exc:
-        return json.dumps({"error": f"Search error: {exc}"})
+        return json.dumps({"error": "Web search failed", "type": type(exc).__name__})
+
+
+def read_source(url):
+    """Hosted extraction only for public URLs actually returned during this run."""
+    log = ACTIVE_EVIDENCE.get()
+    if log is None or not public_url(url) or url not in log.urls:
+        return json.dumps({"error": "URL must be a public source returned by this research run"})
+    try:
+        result = get_tavily_client().extract(urls=[url], extract_depth="advanced", format="text")
+        pages = [{"url": item.get("url"), "excerpt": (item.get("raw_content") or "")[:22000]}
+                 for item in result.get("results", [])]
+        return json.dumps({"documents": pages, "gaps": result.get("failed_results", []),
+                           "limitation": "Bounded extracted text; not necessarily the full document"})
+    except Exception:
+        return json.dumps({"error": "Source extraction failed", "url": url})
 
 
 def _dispatch_tool(name: str, args: dict, found_tickers: list[str]) -> str:
     try:
         if not isinstance(args, dict):
             raise ValueError("Tool arguments must be an object")
-        return _dispatch_valid_tool(name, args, found_tickers)
+        output = _dispatch_valid_tool(name, args, found_tickers)
+        log = ACTIVE_EVIDENCE.get()
+        return log.record(name, args, output) if log is not None else output
     except Exception as exc:
-        return json.dumps({"error": "Tool failed", "tool": name, "type": type(exc).__name__})
+        output = json.dumps({"error": "Tool failed", "tool": name, "type": type(exc).__name__})
+        log = ACTIVE_EVIDENCE.get()
+        return log.record(name, args if isinstance(args, dict) else {}, output) if log is not None else output
 
 
 def _dispatch_valid_tool(name: str, args: dict, found_tickers: list[str]) -> str:
+    if name == "calculate_valuation":
+        return json.dumps(calculate_valuation(args), allow_nan=False)
+    if name == "read_source":
+        return read_source(args["url"])
     if name == "web_search":
         return web_search(args["query"])
     if name == "get_financial_metrics":
@@ -168,7 +222,7 @@ TOOL_SPECS = [
     },
     {
         "name": "get_financial_metrics",
-        "description": "Fetch forensic financial metrics for one ticker: true ROIC, ROE, OCF, FCF, FCF yield, SBC/OCF, valuation, consensus, short interest, technicals, sector, and industry.",
+        "description": "Fetch forensic financial metrics for one ticker: estimated ending-capital ROIC, ROE, OCF, FCF, FCF yield, SBC/OCF, valuation, consensus, short interest, technicals, sector, and industry.",
         "parameters": {
             "type": "object",
             "properties": {"ticker": {"type": "string"}},
@@ -203,6 +257,23 @@ TOOL_SPECS = [
 ]
 
 
+TOOL_SPECS.extend([
+    {"name": "read_source", "description": "Read substantive text from a primary or other public source URL already returned by tools in this run. Search snippets alone are insufficient evidence.",
+     "parameters": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}},
+    {"name": "calculate_valuation", "description": "Calculate bear/base/bull future target prices and returns. equity_per_share: terminal metric is earnings/FCF/FFO/book value per share; enterprise_multiple: metric and net debt use identical currency units and shares use consistent units. No DCF or forecast verification. Include assumptions and explicit dividends in every case.",
+     "parameters": {"type": "object", "properties": {
+         "method": {"type": "string", "enum": ["equity_per_share", "enterprise_multiple"]},
+         "currency": {"type": "string"}, "current_price": {"type": "number"}, "years": {"type": "number"},
+         "scenarios": {"type": "array", "items": {"type": "object", "properties": {
+             "name": {"type": "string", "enum": ["bear", "base", "bull"]},
+             "terminal_metric": {"type": "number"}, "exit_multiple": {"type": "number"},
+             "terminal_net_debt": {"type": "number"}, "terminal_shares": {"type": "number"},
+             "cumulative_dividends_per_share": {"type": "number"}},
+             "required": ["name", "terminal_metric", "exit_multiple", "cumulative_dividends_per_share"]}}},
+         "required": ["method", "currency", "current_price", "years", "scenarios"]}}
+])
+
+
 TOOLS_OPENAI = [
     {
         "type": "function",
@@ -229,6 +300,22 @@ TOOLS_GEMINI = [{"function_declarations": TOOL_SPECS}]
 
 class ResearchFailure(RuntimeError):
     """No complete research result is available; never save this as a verdict."""
+
+
+def provider_error(provider, exc):
+    if isinstance(exc, ResearchFailure):
+        return exc
+    message = str(exc).lower()
+    if any(term in message for term in ("insufficient_quota", "credit_balance", "no credits", "credit balance", "billing")):
+        return ResearchFailure(f"{provider} API credits or quota are exhausted. Fund that provider or select another configured model.")
+    status = getattr(exc, "status_code", None) or getattr(exc, "code", None)
+    if status == 404:
+        return ResearchFailure(f"{provider} configured model is unavailable for this API; check its model ID and account access.")
+    if status == 429:
+        return ResearchFailure(f"{provider} rate limit reached; retry later.")
+    if status in (401, 403):
+        return ResearchFailure(f"{provider} authentication or model access failed; check deployment credentials and access.")
+    return ResearchFailure(f"{provider} request failed ({type(exc).__name__}); research did not complete.")
 
 
 def run_openai_logic(messages, model_name=OPENAI_MODEL):
@@ -258,7 +345,7 @@ def run_openai_logic(messages, model_name=OPENAI_MODEL):
     except ResearchFailure:
         raise
     except Exception as exc:
-        raise ResearchFailure("OpenAI request failed. Check model access, API credits and provider status.") from exc
+        raise provider_error("OpenAI", exc) from exc
 
 
 def run_gemini_logic(messages, model_name=GEMINI_MODEL):
@@ -311,7 +398,7 @@ def run_gemini_logic(messages, model_name=GEMINI_MODEL):
 
         raise ResearchFailure("Gemini exceeded the research tool budget")
     except Exception as exc:
-        raise ResearchFailure("Gemini research failed. Check model access, API credits and provider status.") from exc
+        raise provider_error("Gemini", exc) from exc
 
 
 def run_claude_logic(messages, model_name=CLAUDE_MODEL):
@@ -370,7 +457,7 @@ def run_claude_logic(messages, model_name=CLAUDE_MODEL):
 
         raise ResearchFailure("Claude exceeded the research tool budget")
     except Exception as exc:
-        raise ResearchFailure("Claude research failed. Check model access, API credits and provider status.") from exc
+        raise provider_error("Claude", exc) from exc
 
 
 def run_smart_agent(messages, model_choice=CLAUDE_MODEL):

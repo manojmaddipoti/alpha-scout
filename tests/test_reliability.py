@@ -24,24 +24,6 @@ def test_private_workspace_and_invalid_stage(tmp_path, monkeypatch):
     assert database.load_workspace('alice')['context'] == 'Private Roth cash'
 
 
-def test_stale_context_is_explicit():
-    assert 'STALE OR MISSING' in workspace.workspace_prompt({'confirmed_at':'2020-01-01T00:00:00+00:00'})
-
-
-def test_failure_fallback_is_not_independent_review(monkeypatch):
-    def run(messages, model):
-        if model.startswith('claude'):
-            raise agent.ResearchFailure('billing')
-        return 'draft', ['TEST']
-    monkeypatch.setattr(workspace, 'run_smart_agent', run)
-    text, _ = workspace.reviewed_research([], 'claude-test', 'gpt-test')
-    assert 'fallback, unchallenged' in text
-    text, _ = workspace.reviewed_research([], 'gpt-test', 'claude-test')
-    assert 'challenge unavailable' in text
-    with pytest.raises(ValueError):
-        workspace.reviewed_research([], 'gpt-one', 'gpt-two')
-
-
 def test_openai_preserves_reasoning_and_call_ids(monkeypatch):
     reasoning = N(type='reasoning', model_dump=lambda **kw: {'type':'reasoning','id':'r','summary':[], 'encrypted_content':'cipher'})
     call = N(type='function_call', name='get_financial_metrics', arguments='{"ticker":"NVDA"}', call_id='original',

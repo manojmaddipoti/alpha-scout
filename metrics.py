@@ -113,7 +113,59 @@ def _history_metrics(ticker_obj):
         return {"trend_status": "unavailable"}
 
 
-def get_equity_metrics(ticker: str):
+INCOME_FIELDS = {
+    "revenue": ["Total Revenue", "Operating Revenue"], "gross_profit": ["Gross Profit"],
+    "operating_income": ["Operating Income"], "net_income": ["Net Income"],
+    "diluted_eps": ["Diluted EPS"], "diluted_average_shares": ["Diluted Average Shares"],
+    "interest_expense": ["Interest Expense"], "pretax_income": ["Pretax Income"],
+}
+CASH_FIELDS = {"operating_cash_flow": ["Operating Cash Flow"], "capex": ["Capital Expenditure"],
+               "sbc": ["Stock Based Compensation"], "buybacks": ["Repurchase Of Capital Stock"],
+               "dividends_paid": ["Cash Dividends Paid"], "change_in_working_capital": ["Change In Working Capital"]}
+BALANCE_FIELDS = {"cash": ["Cash And Cash Equivalents"], "total_debt": ["Total Debt"],
+                  "equity": ["Stockholders Equity"], "current_assets": ["Current Assets"],
+                  "current_liabilities": ["Current Liabilities"]}
+
+
+def statement_history(statement, fields, limit):
+    if statement is None or statement.empty:
+        return []
+    records = []
+    for column in sorted(statement.columns, reverse=True)[:limit]:
+        row = {"period_end": str(column)[:10]}
+        for field, aliases in fields.items():
+            row[field] = next((_safe_float(statement.loc[name, column]) for name in aliases
+                               if name in statement.index and _safe_float(statement.loc[name, column]) is not None), None)
+        records.append(row)
+    return records
+
+
+def financial_history(stock, financials, cashflow, balance_sheet):
+    result = {"annual_income": statement_history(financials, INCOME_FIELDS, 4),
+              "annual_cashflow": statement_history(cashflow, CASH_FIELDS, 4),
+              "annual_balance": statement_history(balance_sheet, BALANCE_FIELDS, 4)}
+    for name, attr, fields in [("quarterly_income", "quarterly_financials", INCOME_FIELDS),
+                               ("quarterly_cashflow", "quarterly_cashflow", CASH_FIELDS),
+                               ("quarterly_balance", "quarterly_balance_sheet", BALANCE_FIELDS)]:
+        try:
+            result[name] = statement_history(getattr(stock, attr), fields, 8)
+        except Exception:
+            result[name] = []
+    result["limitations"] = "Vendor coverage may supply fewer periods. Missing is not zero. Quarterly rows are not TTM. Check filed statements."
+    return result
+
+
+def clean_numbers(value):
+    if isinstance(value, dict):
+        return {k: clean_numbers(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [clean_numbers(v) for v in value]
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return value
+
+
+def get_equity_metrics(ticker: str, include_history: bool = True):
     ticker = ticker.upper().strip()
     stock = yf.Ticker(ticker)
 
@@ -141,7 +193,7 @@ def get_equity_metrics(ticker: str):
     if financials is not None and not financials.empty:
         for name in ["Total Revenue", "Operating Revenue"]:
             if name in financials.index:
-                series = financials.loc[name].dropna()
+                series = financials.loc[name]
                 if len(series) >= 4:
                     older_revenue = _safe_float(series.iloc[3])
                 break
@@ -180,7 +232,7 @@ def get_equity_metrics(ticker: str):
     market_cap = _safe_float(info.get("marketCap"))
     enterprise_value = _safe_float(info.get("enterpriseValue"))
 
-    revenue_growth = _ratio(revenue - prior_revenue, prior_revenue) if revenue and prior_revenue else info.get("revenueGrowth")
+    revenue_growth = _ratio(revenue - prior_revenue, prior_revenue) if revenue and prior_revenue else None
     fcf_margin = _ratio(fcf, revenue)
     fcf_yield = _ratio(fcf, market_cap)
     fcf_per_share = _ratio(fcf, shares)
@@ -192,8 +244,11 @@ def get_equity_metrics(ticker: str):
     roic = _ratio(nopat, invested_capital) if income_period == balance_period else None
     sbc_to_ocf = _ratio(sbc, ocf) if ocf is not None and ocf > 0 else None
 
-    gross_margin = info.get("grossMargins")
-    operating_margin = info.get("operatingMargins") or _ratio(operating_income, revenue)
+    gross_profit = _latest_statement_value(financials, ["Gross Profit"])
+    gross_margin = _ratio(gross_profit, revenue)
+    operating_margin = _ratio(operating_income, revenue)
+    interest_expense = _latest_statement_value(financials, ["Interest Expense"])
+    interest_coverage = _ratio(operating_income, abs(interest_expense)) if interest_expense not in (None, 0) else None
     rule_of_40 = None
     if revenue_growth is not None and fcf_margin is not None:
         rule_of_40 = revenue_growth + fcf_margin
@@ -213,6 +268,13 @@ def get_equity_metrics(ticker: str):
         "tax_rate_assumed": tax_provision is None or pretax_income in (None, 0) or _ratio(tax_provision, pretax_income) != tax_rate,
 
         "company_name": info.get("longName") or info.get("shortName"),
+        "quote_currency": info.get("currency"),
+        "financial_currency": info.get("financialCurrency"),
+        "exchange": info.get("exchange"),
+        "security_type": info.get("quoteType"),
+        "source_url": f"https://finance.yahoo.com/quote/{ticker}/financials/",
+        "issuer_website": info.get("website"),
+        "business_description": info.get("longBusinessSummary"),
         "sector": info.get("sector"),
         "industry": info.get("industry"),
         "market_cap": market_cap,
@@ -224,6 +286,8 @@ def get_equity_metrics(ticker: str):
         "revenue_cagr_3y_pct": _safe_pct(_cagr(older_revenue, revenue, 3)),
         "gross_margin_pct": _safe_pct(gross_margin),
         "operating_margin_pct": _safe_pct(operating_margin),
+        "margin_basis": "annual statement financial_period; not vendor TTM margins",
+        "interest_coverage": interest_coverage,
         "operating_cash_flow": ocf,
         "capital_expenditure": capex,
         "free_cash_flow": fcf,
@@ -249,15 +313,21 @@ def get_equity_metrics(ticker: str):
         "analyst_target_mean_price": info.get("targetMeanPrice"),
         "analyst_recommendation": info.get("recommendationKey"),
         "rule_of_40_pct": _safe_pct(rule_of_40),
-        "magic_number": magic_number,
+        "revenue_increment_to_sga_proxy": magic_number,
+        "proxy_limitation": "Annual incremental revenue / SG&A is not the standard SaaS magic number.",
     }
 
-    metrics.update(_history_metrics(stock))
-    return metrics
+    if include_history:
+        metrics["financial_history"] = financial_history(stock, financials, cashflow, balance_sheet)
+    if info.get("exchange") in {"NMS", "NGM", "NCM", "NYQ", "ASE", "PCX", "BTS", "BATS", "NYSE", "NASDAQ"}:
+        metrics.update(_history_metrics(stock))
+    else:
+        metrics["trend_status"] = "unavailable: US-session calendar not validated for this exchange"
+    return clean_numbers(metrics)
 
 
 def get_equity_metrics_json(ticker: str):
-    return json.dumps(get_equity_metrics(ticker), default=str)
+    return json.dumps(get_equity_metrics(ticker), default=str, allow_nan=False)
 
 
 def get_competitor_metrics_json(target_ticker: str, competitors: list[str] | None = None):
@@ -273,30 +343,41 @@ def get_competitor_metrics_json(target_ticker: str, competitors: list[str] | Non
     rows = []
     for ticker in tickers:
         try:
-            data = get_equity_metrics(ticker)
-            rows.append({
-                "ticker": data["ticker"],
-                "company_name": data["company_name"],
-                "sector": data["sector"],
-                "industry": data["industry"],
-                "market_cap": data["market_cap"],
-                "revenue_growth_yoy_pct": data["revenue_growth_yoy_pct"],
-                "gross_margin_pct": data["gross_margin_pct"],
-                "free_cash_flow_margin_pct": data["free_cash_flow_margin_pct"],
-                "free_cash_flow_yield_pct": data["free_cash_flow_yield_pct"],
-                "roic_pct": data["roic_pct"],
-                "sbc_to_ocf_pct": data["sbc_to_ocf_pct"],
-                "ev_to_revenue": data["ev_to_revenue"],
-                "ev_to_fcf": data["ev_to_fcf"],
-                "one_year_price_return_pct": data.get("one_year_price_return_pct"),
-            })
+            data = get_equity_metrics(ticker, include_history=False)
+            keys = ["ticker", "company_name", "sector", "industry", "security_type", "exchange",
+                    "quote_currency", "financial_currency", "financial_period", "cashflow_period", "balance_sheet_period",
+                    "source_url", "retrieved_at", "price_as_of", "trend_status", "market_cap", "revenue", "revenue_growth_yoy_pct",
+                    "gross_margin_pct", "operating_margin_pct", "margin_basis", "interest_coverage", "free_cash_flow", "free_cash_flow_margin_pct",
+                    "free_cash_flow_yield_pct", "roic_pct", "roic_method", "sbc_to_ocf_pct", "net_cash_or_debt",
+                    "forward_pe", "trailing_pe", "ev_to_revenue", "ev_to_fcf", "one_year_price_return_pct"]
+            rows.append({key: data.get(key) for key in keys})
         except Exception as exc:
             rows.append({"ticker": ticker, "error": str(exc)})
 
     payload = {
         "target": target_ticker,
         "competitors_provided": clean_competitors,
-        "note": "If peers are missing or irrelevant, use web_search to identify better public peers and call get_competitor_metrics again.",
+        "note": "Explain why these peers compete. Compare target vs EACH peer using dated numeric evidence. "
+                "Separate superior business economics from cheaper stock valuation. No aggregate winner score.",
+        "comparability_gaps": peer_comparability(rows),
         "rows": rows,
     }
     return json.dumps(payload, default=str)
+
+
+def peer_comparability(rows):
+    if not rows:
+        return ["No peer data"]
+    target = rows[0]
+    gaps = []
+    for peer in rows[1:]:
+        symbol = peer.get("ticker", "unknown")
+        if peer.get("error"):
+            gaps.append(f"{symbol}: retrieval failed")
+            continue
+        for field in ("financial_period", "cashflow_period", "financial_currency", "quote_currency"):
+            if not target.get(field) or not peer.get(field) or target[field] != peer[field]:
+                gaps.append(f"{symbol}: {field} differs or is missing; do not treat figures as strictly comparable")
+    if len(rows) < 4:
+        gaps.append("Fewer than three peers retrieved; justify a smaller relevant peer set or gather more")
+    return gaps
