@@ -1,29 +1,14 @@
-import time
+"""Ticker-first independent equity research, isolated from portfolio workflows."""
 import json
-import pandas as pd
-from datetime import date
-from market_sessions import completed_history
-from research_workspace import reviewed_research, workspace_prompt
-from report_safety import safe_report_html, deny_resource_fetch
-import streamlit as st
-import yfinance as yf
 from datetime import datetime
-from search_agent import SYSTEM_PROMPT
+import streamlit as st
 from config import Config
 from model_config import MODEL_CHOICES, provider_for_model
+from report_safety import safe_report_html, deny_resource_fetch
+from stock_research import normalize_ticker, run_stock_research, run_followup
 import database as db
 
-# Configuration
-st.set_page_config(page_title="Market Intelligence", page_icon="📊", layout="wide")
-
-st.markdown("""
-<style>
-    .stAppHeader {display: none;}
-    footer {visibility: hidden;}
-    [data-testid="stSidebar"] {padding-top: 2rem;}
-    .stChatInputContainer {padding-bottom: 20px;}
-</style>
-""", unsafe_allow_html=True)
+st.set_page_config(page_title="Alpha Scout Independent Research", page_icon="📊", layout="wide")
 
 # Authentication
 try:
@@ -73,7 +58,7 @@ if "current_session_id" not in st.session_state:
 
 # Sidebar Navigation
 with st.sidebar:
-    st.title("Market Intelligence Agent")
+    st.title("Alpha Scout Analyst")
     st.caption(user_claims.get("email") or user_claims.get("name") or "Signed in")
     st.button("Log out", on_click=st.logout, use_container_width=True)
 
@@ -90,9 +75,10 @@ with st.sidebar:
     if st.button("New Chat", use_container_width=True, type="primary"):
         st.session_state.current_session_id = None
         st.session_state.messages = []
+        st.session_state.pop("transient_report", None)
         st.rerun()
 
-    st.subheader("Recent Chats")
+    st.subheader("Research history")
 
     if st.session_state.db_init:
         try:
@@ -115,31 +101,6 @@ with st.sidebar:
                 st.rerun()
             except Exception as e:
                 st.error(f"Error deleting chat: {e}")
-
-# Message History Management
-if st.session_state.current_session_id is None:
-    st.session_state.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-else:
-    if st.session_state.db_init:
-        try:
-            st.session_state.messages = db.load_messages(
-                user_id, st.session_state.current_session_id
-            )
-        except Exception as e:
-            st.error(f"Error loading messages: {e}")
-            st.session_state.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    else:
-        st.session_state.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-
-# Helper Functions
-@st.cache_data(ttl=3600)
-def get_stock_history(ticker):
-    try:
-        stock = yf.Ticker(ticker)
-        df = stock.history(period="1y")
-        return df['Close'] if not df.empty else None
-    except Exception:
-        return None
 
 PDF_CSS = """
 @page {
@@ -248,141 +209,81 @@ def create_pdf(text):
     except Exception:
         return None
 
-# Private workspace: manually maintained data, isolated by authenticated owner.
-workspace = {"context": "", "entries": []}
-if st.session_state.db_init:
-    workspace = db.load_workspace(user_id)
-    with st.expander("Portfolio context and research watchlist"):
-        st.caption("Private to your sign-in. Enter account types, holdings/values, cash by account, goals, drawdown tolerance and restrictions. Do not enter credentials. Reconfirm after changes; notes expire for decision use after 35 days.")
-        with st.form("workspace"):
-            context = st.text_area("Portfolio context", value=workspace.get("context", ""), height=180, max_chars=20000)
-            table = pd.DataFrame(workspace.get("entries", []), columns=["ticker", "stage", "thesis", "review_date"])
-            table["review_date"] = pd.to_datetime(table["review_date"]).dt.date
-            entries_table = st.data_editor(table, num_rows="dynamic", hide_index=True, column_config={
-                "ticker": st.column_config.TextColumn("Ticker", required=True),
-                "stage": st.column_config.SelectboxColumn("Research stage", options=["candidate", "researching", "watchlist", "held", "paused", "rejected"], required=True),
-                "thesis": st.column_config.TextColumn("Thesis / what to verify", required=True),
-                "review_date": st.column_config.DateColumn("Review by", required=True),
-            })
-            st.caption("Add a row to track a candidate. Research stages never authorize a trade.")
-            if st.form_submit_button("Save and confirm current notes"):
-                try:
-                    entries = entries_table.to_dict("records")
-                    for entry in entries:
-                        entry["ticker"] = str(entry["ticker"]).strip().upper()
-                        entry["review_date"] = str(entry["review_date"])
-                    db.save_workspace(user_id, context, entries)
-                    st.rerun()
-                except (ValueError, TypeError) as exc:
-                    st.error(str(exc))
-        if workspace.get("entries"):
-            due = [entry["ticker"] for entry in workspace["entries"] if entry["review_date"] <= date.today().isoformat() and entry["stage"] not in ("paused", "rejected")]
-            if due:
-                st.warning("Research review due: " + ", ".join(due))
-        st.download_button("Export private research workspace", json.dumps(workspace, indent=2), "research_workspace.json", "application/json")
-st.info("Research workspace: model outputs are proposals, not validated trade instructions. Check the independent challenge and unresolved data gaps.")
 
-# Chat Interface
-for i, message in enumerate(st.session_state.messages):
-    if message["role"] != "system":
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+st.title("Independent stock research")
+st.caption("Enter one ticker for a detailed assessment of its business, financials, valuation and competitors. No portfolio information is needed.")
 
-            if message["role"] == "assistant":
-                st.download_button(
-                    label="Download Markdown",
-                    data=message["content"],
-                    file_name=f"report_{i}.md",
-                    mime="text/markdown",
-                    key=f"md_{i}"
-                )
-                pdf_data = create_pdf(message["content"])
-                if pdf_data:
-                    st.download_button(
-                        label="Download PDF",
-                        data=pdf_data,
-                        file_name=f"report_{i}.pdf",
-                        mime="application/pdf",
-                        key=f"pdf_{i}"
-                    )
+with st.form("ticker_research"):
+    ticker_input = st.text_input("Stock ticker", placeholder="MSFT, NVDA, TSM or BRK-B", max_chars=15)
+    submitted = st.form_submit_button("Research stock", type="primary")
 
-# User Input Handler
-if prompt := st.chat_input("Ask about a stock (e.g., 'Analyze NVDA')"):
-
-    if st.session_state.current_session_id is None and st.session_state.db_init:
-        try:
-            short_title = (prompt[:20] + "..") if len(prompt) > 20 else prompt
-            st.session_state.current_session_id = db.create_session(user_id, short_title)
-            db.save_message(
-                user_id,
-                st.session_state.current_session_id,
-                "system",
-                SYSTEM_PROMPT,
-            )
-        except Exception:
-            st.warning("Chat history won't be saved for this session")
-
-    st.chat_message("user").markdown(prompt)
-    if st.session_state.db_init and st.session_state.current_session_id:
-        try:
-            db.save_message(
-                user_id, st.session_state.current_session_id, "user", prompt
-            )
-        except Exception:
-            pass
-
-    st.session_state.messages.append({"role": "user", "content": prompt})
-
-    with st.chat_message("assistant"):
-        with st.spinner("Analyzing market data..."):
+if submitted:
+    try:
+        ticker = normalize_ticker(ticker_input)
+        with st.spinner(f"Researching {ticker}: disclosures, financials, competitors and valuation..."):
+            result = run_stock_research(ticker, model_choice, None if challenger == "None" else challenger)
+        st.session_state.transient_report = json.loads(result.to_json())
+        st.session_state.current_session_id = None
+        if st.session_state.db_init:
             try:
-                # Always use the current protocol, not a historical system prompt saved in SQLite.
-                request = [{"role": "system", "content": SYSTEM_PROMPT},
-                           {"role": "user", "content": workspace_prompt(workspace)},
-                           *[m for m in st.session_state.messages if m["role"] != "system"]]
-                response_text, found_tickers = reviewed_research(request, model_choice, None if challenger == "None" else challenger)
+                st.session_state.current_session_id = db.save_research_report(user_id, result.to_json())
+                st.session_state.pop("transient_report", None)
+            except Exception:
+                st.warning("Research completed but could not be saved. Download this report before leaving.")
+        st.rerun()
+    except Exception as exc:
+        st.error(str(exc))
+        st.stop()
 
-                if found_tickers:
-                    for ticker in found_tickers:
-                        st.subheader(f"{ticker} Price Trend")
-                        data = get_stock_history(ticker)
-                        if data is not None:
-                            st.line_chart(data, color="#00FF00")
+session_id = st.session_state.current_session_id
+report = st.session_state.get("transient_report") if session_id is None else None
+messages = []
+if session_id and st.session_state.db_init:
+    try:
+        report = db.load_research_report(user_id, session_id)
+        messages = db.load_messages(user_id, session_id)
+    except Exception:
+        st.warning("Saved research could not be loaded. Check database availability.")
+if report and not messages:
+    messages = [{"role": "assistant", "content": report["report"]}]
 
-                st.markdown(response_text)
+if report:
+    st.subheader(f"{report['ticker']} research")
+    st.caption(f"Generated {report['created_at']} · {report['review_status']}")
+    if report['flags']:
+        st.warning("Evidence or completeness gaps remain. Read the report's gap list before relying on its conclusions.")
+    st.download_button("Download research and source data", json.dumps(report, indent=2),
+                       f"{report['ticker']}_research.json", "application/json")
+elif session_id:
+    st.info("Archived conversation. Start a ticker report above for independent research; archived portfolio context is not reused.")
+else:
+    st.markdown("The report covers business economics, financial history, earnings quality, competitors, valuation scenarios, catalysts and the bear case. A separate model can challenge the findings.")
 
-                st.download_button(
-                    label="Download Markdown",
-                    data=response_text,
-                    file_name="analysis_report.md",
-                    mime="text/markdown",
-                    key="md_latest"
-                )
+for i, message in enumerate(messages):
+    if message['role'] not in ('assistant', 'user'):
+        continue
+    with st.chat_message(message['role']):
+        st.markdown(message['content'])
+        if message['role'] == 'assistant':
+            st.download_button("Download Markdown", message['content'], f"research_{i}.md", "text/markdown", key=f"md_{i}")
+            pdf = create_pdf(message['content'])
+            if pdf:
+                st.download_button("Download PDF", pdf, f"research_{i}.pdf", "application/pdf", key=f"pdf_{i}")
 
-                pdf_data = create_pdf(response_text)
-                if pdf_data:
-                    st.download_button(
-                        label="Download PDF",
-                        data=pdf_data,
-                        file_name="analysis_report.pdf",
-                        mime="application/pdf",
-                        key="pdf_latest"
-                    )
-            except Exception as e:
-                error_msg = f"Error generating response: {str(e)}"
-                st.error(error_msg)
-                st.stop()  # Failed provider output must never be persisted as completed research.
-
-    if st.session_state.db_init and st.session_state.current_session_id:
+if report:
+    question = st.chat_input("Ask a follow-up about this stock or its competitors")
+    if question:
         try:
-            db.save_message(
-                user_id,
-                st.session_state.current_session_id,
-                "assistant",
-                response_text,
-            )
-        except Exception:
-            pass
-
-    time.sleep(0.5)
-    st.rerun()
+            with st.spinner("Investigating your follow-up..."):
+                response = run_followup(report['ticker'], messages, question, model_choice, report.get('evidence', []))
+            if session_id and st.session_state.db_init:
+                db.save_message(user_id, session_id, 'user', question)
+                db.save_message(user_id, session_id, 'assistant', response)
+                st.rerun()
+            else:
+                st.chat_message('user').markdown(question)
+                st.chat_message('assistant').markdown(response)
+                st.download_button("Download follow-up", response, "followup.md", "text/markdown")
+                st.warning("This conversation is not saved because durable storage is unavailable.")
+        except Exception as exc:
+            st.error(str(exc))

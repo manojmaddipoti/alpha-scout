@@ -184,20 +184,19 @@ Update the local OIDC redirect URI to use port 8502 as well.
 - Mount persistent data with the minimum necessary permissions.
 - Treat generated research as unverified and not as investment advice.
 
-## Updated research workspace
+## Independent ticker research
 
-Model defaults are `claude-opus-5-5`, `gpt-6.1-sol`, and `gemini-3.1-pro`.
-Only one provider key is needed to start; configure a second provider to enable the
-independent challenge selector. Configure Tavily and SEC identity for full research.
-Missing credits or unavailable models remain provider-side errors; fallback research
-is explicitly marked unchallenged. No provider error is saved as a completed memo.
+The application now accepts a stock ticker without portfolio context. The former
+portfolio workspace is hidden and its stored notes are not sent to research models.
+Archived conversations are retained; new reports get their own independent sessions.
+See [the detailed guide](docs/independent-research-guide.md).
 
-After signing in, expand **Portfolio context and research watchlist** to maintain
-private account notes and candidate rows. Saving reconfirms the data timestamp.
-Existing chat and ownership tables are preserved; the workspace table is created
-additively. Back up your SQLite file before rollout. The app does not import another
-project's personal portfolio, execute trades or automatically update candidate stages.
+Defaults remain `claude-opus-5-5`, `gpt-6.1-sol`, and `gemini-3.1-pro`. One provider key
+is sufficient; a second provider enables independent challenge. Tavily powers both
+search and source extraction; SEC identity is needed for filings. Provider credits
+and access remain required. Research and evidence are saved in an additive SQLite
+research_reports table; back up the database before upgrading.
 
-If native WeasyPrint libraries are missing, the app still works with Markdown exports;
-PDF downloads appear only when rendering succeeds. The Docker image includes the
-native libraries. See the README's October update for implementation limits and tests.
+Missing native PDF libraries do not block research or Markdown downloads. The Docker
+image includes those libraries. This project does not deploy or run the separate
+portfolio monitoring system.
